@@ -33,11 +33,11 @@ jobs:
       matrix:
         lang: ${{ fromJSON(inputs.languages) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: actions/checkout@v5
+      - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.lang.language }}
           build-mode: ${{ matrix.lang.build-mode || 'autobuild' }}
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.lang.language }}"
