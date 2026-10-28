@@ -1,6 +1,6 @@
 {
   "config": {
-    "extends": ".markdownlint.jsonc"
+    "extends": ".markdownlint.jsonc",
   },
-  "ignores": ["node_modules/**", ".build/**"]
+  "ignores": ["node_modules/**", ".build/**"],
 }

@@ -9,31 +9,31 @@ doesn't define its own equivalent file.
 
 ## What's in this repo
 
-| Path | Purpose |
-| --- | --- |
-| `CODE_OF_CONDUCT.md` | Expected conduct across every repo. |
-| `SECURITY.md` | How to privately report a vulnerability or data-handling concern. |
-| `SUPPORT.md` | Where to go for help. |
-| `CONTRIBUTING.md` | Branching, commits, PR, and review conventions. |
-| `AGENTS.md` | Rules for AI coding agents (Claude, Copilot, etc.) working in a repo. |
-| `.github/copilot-instructions.md` | Copilot-specific pointer to `AGENTS.md`. |
-| `CODEOWNERS.example` | Starter template to copy to `.github/CODEOWNERS` in your repo. |
-| `.github/CODEOWNERS` | Code-review ownership for *this* repo. |
-| `.github/PULL_REQUEST_TEMPLATE.md` | Default PR template. |
-| `.github/ISSUE_TEMPLATE/*` | Default bug report / feature request forms. |
-| `.github/dependabot.yml` | Dependabot config for *this* repo. |
-| `.github/dependabot.example.yml` | Starter template other repos copy. |
-| `.editorconfig`, `.gitignore`, `.prettierrc`, `.prettierignore`, `.markdownlint.jsonc`, `.markdownlint-cli2.jsonc`, `.yamllint.yaml` | Shared lint/format baseline; also the fallback config used by `reusable-lint.yml` for repos without their own. |
-| `.github/workflows/reusable-lint.yml` | The org lint gate: actionlint, JSON validity, prettier, markdownlint, yamllint. |
-| `.github/workflows/org-lint.yml` | Thin caller of the above — this is the workflow GitHub is told to require on every repo (see `github-rulesets/`). |
-| `.github/workflows/reusable-pr-title-lint.yml` | Opt-in Conventional Commits PR title check. |
-| `.github/workflows/reusable-dependency-review.yml` | Opt-in dependency vulnerability check on PRs. |
-| `.github/workflows/reusable-codeql.yml` | Opt-in CodeQL static analysis (JS/TS, Python, Swift, etc.). |
-| `.github/workflows/reusable-stale.yml` | Opt-in stale issue/PR bot. |
-| `workflow-templates/lint.yml` + `.properties.json` | The same lint check, offered in every repo's "New workflow" picker. |
-| `github-rulesets/*.json` | Branch/tag protection rules, importable via GitHub's ruleset UI. |
-| `ORG_SETTINGS.md` | Step-by-step guide for an org owner to apply the rulesets and related settings. |
-| `profile/README.md` | The landing page shown at <https://github.com/sas-technology>. |
+| Path                                                                                                                                 | Purpose                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `CODE_OF_CONDUCT.md`                                                                                                                 | Expected conduct across every repo.                                                                               |
+| `SECURITY.md`                                                                                                                        | How to privately report a vulnerability or data-handling concern.                                                 |
+| `SUPPORT.md`                                                                                                                         | Where to go for help.                                                                                             |
+| `CONTRIBUTING.md`                                                                                                                    | Branching, commits, PR, and review conventions.                                                                   |
+| `AGENTS.md`                                                                                                                          | Rules for AI coding agents (Claude, Copilot, etc.) working in a repo.                                             |
+| `.github/copilot-instructions.md`                                                                                                    | Copilot-specific pointer to `AGENTS.md`.                                                                          |
+| `CODEOWNERS.example`                                                                                                                 | Starter template to copy to `.github/CODEOWNERS` in your repo.                                                    |
+| `.github/CODEOWNERS`                                                                                                                 | Code-review ownership for _this_ repo.                                                                            |
+| `.github/PULL_REQUEST_TEMPLATE.md`                                                                                                   | Default PR template.                                                                                              |
+| `.github/ISSUE_TEMPLATE/*`                                                                                                           | Default bug report / feature request forms.                                                                       |
+| `.github/dependabot.yml`                                                                                                             | Dependabot config for _this_ repo.                                                                                |
+| `.github/dependabot.example.yml`                                                                                                     | Starter template other repos copy.                                                                                |
+| `.editorconfig`, `.gitignore`, `.prettierrc`, `.prettierignore`, `.markdownlint.jsonc`, `.markdownlint-cli2.jsonc`, `.yamllint.yaml` | Shared lint/format baseline; also the fallback config used by `reusable-lint.yml` for repos without their own.    |
+| `.github/workflows/reusable-lint.yml`                                                                                                | The org lint gate: actionlint, JSON validity, prettier, markdownlint, yamllint.                                   |
+| `.github/workflows/org-lint.yml`                                                                                                     | Thin caller of the above — this is the workflow GitHub is told to require on every repo (see `github-rulesets/`). |
+| `.github/workflows/reusable-pr-title-lint.yml`                                                                                       | Opt-in Conventional Commits PR title check.                                                                       |
+| `.github/workflows/reusable-dependency-review.yml`                                                                                   | Opt-in dependency vulnerability check on PRs.                                                                     |
+| `.github/workflows/reusable-codeql.yml`                                                                                              | Opt-in CodeQL static analysis (JS/TS, Python, Swift, etc.).                                                       |
+| `.github/workflows/reusable-stale.yml`                                                                                               | Opt-in stale issue/PR bot.                                                                                        |
+| `workflow-templates/lint.yml` + `.properties.json`                                                                                   | The same lint check, offered in every repo's "New workflow" picker.                                               |
+| `github-rulesets/*.json`                                                                                                             | Branch/tag protection rules, importable via GitHub's ruleset UI.                                                  |
+| `ORG_SETTINGS.md`                                                                                                                    | Step-by-step guide for an org owner to apply the rulesets and related settings.                                   |
+| `profile/README.md`                                                                                                                  | The landing page shown at <https://github.com/sas-technology>.                                                    |
 
 ## How GitHub uses this repo
 
@@ -59,7 +59,7 @@ doesn't define its own equivalent file.
 ### Read by AI agents in this repo only
 
 - **`AGENTS.md`** and **`.github/copilot-instructions.md`** apply to
-  agent sessions in *this* repo. They don't auto-propagate — copy them
+  agent sessions in _this_ repo. They don't auto-propagate — copy them
   into a repo that wants the same rules for its own agent sessions.
 
 ### Per-repo configuration (starter templates here, each repo copies)
@@ -81,7 +81,7 @@ doesn't define its own equivalent file.
 Any repo can override a default just by adding its own file at the
 same path — GitHub prefers the repo-level file.
 
-## What this repo intentionally does *not* include
+## What this repo intentionally does _not_ include
 
 This started from a much larger reference `.github` repo built for a
 public open-source organization shipping packages across a dozen

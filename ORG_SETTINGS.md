@@ -1,6 +1,6 @@
 # Org settings — apply guide
 
-Everything in this repo that's just a *file* (community health files,
+Everything in this repo that's just a _file_ (community health files,
 templates, reusable workflows) takes effect automatically, per the
 table in [`README.md`](./README.md). Everything below needs a human
 with **organization owner** access to click through GitHub's UI (or
@@ -26,7 +26,7 @@ today will:
 
 The lint check (`org-lint.yml`) and CODEOWNERS auto-review-requests
 still work on private repos either way — those aren't plan-gated, they
-just can't be made *required to merge* without protection/rulesets.
+just can't be made _required to merge_ without protection/rulesets.
 
 **To get real enforcement on private repos, upgrade the org to GitHub
 Team** (or Pro, repo-by-repo). Re-check the current plan comparison at
@@ -43,10 +43,10 @@ For each JSON file in [`github-rulesets/`](./github-rulesets/):
 2. Upload the JSON file.
 3. Review it, then set **Enforcement status** to **Active**.
 
-| File | What it does |
-| --- | --- |
+| File                            | What it does                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `org-wide-main-protection.json` | On every repo's default branch: no deletion, no force-push, 1 required PR approval, PR review threads must be resolved, squash/rebase merges only, and the five `lint / *` checks + the org-required `org-lint.yml` workflow must pass before merge. Org admins can bypass. **Only takes effect on public repos under the org's current GitHub Free plan — see the callout above.** |
-| `release-tag-protection.json` | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases. Same Free-plan caveat applies. |
+| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases. Same Free-plan caveat applies.                                                                                                                                                                                                                               |
 
 **Before you import `org-wide-main-protection.json`**, note it
 hardcodes this repo's numeric ID (`1211111495`, i.e.
