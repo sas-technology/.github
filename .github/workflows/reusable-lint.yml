@@ -30,7 +30,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
-      - uses: reviewdog/action-actionlint@cfa6a621f27735ccc88d35af9d0608692fd9b9f7  # v1
+      # actionlint errors out when a repo has no .github/workflows at all, so
+      # skip the scan there; the job still runs and reports success, which
+      # keeps the required "lint / actionlint" check satisfied.
+      - name: Look for workflow files
+        id: workflows
+        run: |
+          if compgen -G ".github/workflows/*.y*ml" > /dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No workflow files in this repo; nothing for actionlint to check."
+          fi
+      - if: steps.workflows.outputs.found == 'true'
+        uses: reviewdog/action-actionlint@cfa6a621f27735ccc88d35af9d0608692fd9b9f7  # v1
         with:
           fail_level: error
 
