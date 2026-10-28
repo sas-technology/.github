@@ -1,0 +1,102 @@
+# Tags every release of sas-technology/.github to `main` as the next MINOR
+# (x.y.z -> x.(y+1).0, the org versioning policy); merges into `staging` are patches
+# (staging-version.yml); a MAJOR only by hand, with workflow_dispatch.
+#
+# Why it matters here: every repo in the org calls this repo's
+# reusable workflows and actions. They pin one commit SHA with the release
+# tag as a comment (`@<sha>  # v0.2.0`), so Dependabot (github-actions
+# ecosystem, target-branch: staging) can see each new release and open the
+# PR that moves the pin. Without a tag on `main`, there is nothing for it to
+# move to, and the pins drift (eight versions at once, 2026-10-21).
+#
+# Gated on Lint passing on the release commit; a red `main` gets no version.
+# Uses this repo's own next-version action by local path, so no pin to bump.
+name: Main release
+
+on:
+  workflow_run:
+    workflows: [Lint]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Override the bump (major is only ever manual).
+        type: choice
+        options: [minor, patch, major]
+        default: minor
+
+permissions:
+  contents: read
+
+concurrency:
+  group: version-tag-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag the next minor
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # Check out the default ref (main's tip), never the workflow_run's
+      # head_sha: the next step runs a local action from this tree with
+      # contents: write (Semgrep workflow-run-target-code-checkout).
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Lint passed on head_sha. If main has moved on since, that newer push
+      # runs Lint and this workflow itself, so this run tags nothing.
+      - name: Release only the commit Lint passed
+        id: gate
+        if: github.event_name == 'workflow_run'
+        env:
+          LINTED: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          if [ "$head" != "$LINTED" ]; then
+            echo "main is at $head, Lint passed on $LINTED; the newer push releases itself."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute the next version
+        id: v
+        if: steps.gate.outputs.skip != 'true'
+        uses: ./.github/actions/next-version
+        with:
+          channel: main
+          bump: ${{ inputs.bump || '' }}
+          manual: ${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Push the tag and release
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
+          head="$(git rev-parse HEAD)"
+          # A re-run, or a commit that already has a minor release: nothing.
+          existing="$(git ls-remote --tags "$remote" 'refs/tags/v*' \
+            | awk -v h="$head" '$1 == h && $2 ~ /\.0\^\{\}$/ { print $2; exit }')"
+          if [ -n "$existing" ]; then
+            echo "$head is already released as $existing."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push "$remote" "refs/tags/$TAG"
+          gh release create "$TAG" --verify-tag --latest --title "$TAG" --generate-notes
+          echo "Released $TAG at $head." | tee -a "$GITHUB_STEP_SUMMARY"

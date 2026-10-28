@@ -1,0 +1,173 @@
+# Release version check. Fails a pull request that writes a version the org
+# versioning policy does not allow next:
+#
+#   PR into `staging`            PATCH  x.y.z -> x.y.(z+1)
+#   PR into the default branch   MINOR  x.y.z -> x.(y+1).0
+#   MAJOR                        only with the `semver:major` label on the PR
+#
+# The label is read through the API when the job runs, not from the event,
+# so after adding it, "Re-run" on the failed check is enough.
+#
+# A PR that writes no new version (the usual case: the merge is tagged by
+# the repo's release workflow) passes, and its step summary names the
+# version the merge will be tagged with. The logic lives in the composite
+# action .github/actions/release-version-check; the policy itself is
+# .github/actions/next-version/next-version.mjs.
+#
+# It fails closed: a version it cannot read or verify is refused. A PR that
+# removes or resets a written version (a version moving into code, say), or
+# writes one in a repo whose tags are not v<MAJOR.MINOR.PATCH>, is refused
+# too; such a change needs an owner bypass of the check.
+#
+# HOW IT IS ENFORCED
+#
+# This file is meant to be named in an org ruleset, in a "Require
+# workflows to pass" rule:
+#
+#   repository  sas-technology/.github (repo id 1211111495)
+#   path        .github/workflows/release-version-check.yml
+#   ref         refs/heads/main
+#   targets     ~DEFAULT_BRANCH and staging
+#
+# GitHub then runs it on every pull request into those branches, in every
+# repo the ruleset covers, from this repo's main branch.
+#
+#   - A ruleset-run workflow IGNORES the `on:` filters below (types, branches,
+#     paths). So the job decides for itself: it checks pull_request and
+#     merge_group runs, and any other event fails.
+#   - In the merge queue it checks again, against the group's base and head
+#     (merge_group.base_sha / head_sha). The PR number comes from the queue's
+#     head ref (gh-readonly-queue/<base>/pr-<N>-<sha>), to read the
+#     semver:major label; when it cannot be read, a major is refused. A
+#     group can hold several PRs while the ref names only the last, so a
+#     major release merges alone (merge queue batch size 1, or merge it
+#     outside a batch).
+#   - NEVER put it on a ruleset that targets all branches. A "Require
+#     workflows to pass" rule also blocks direct pushes to the branches it
+#     covers, and every feature branch would become unpushable.
+#
+# The job checks out sas-technology/.github at the commit this workflow runs from
+# (github.workflow_ref / workflow_sha), so the action always matches this
+# file; no pin to bump. It never checks out or runs the PR's code: the
+# version files are read through the contents API.
+#
+# In sas-technology/.github itself it runs as an ordinary pull_request workflow on
+# this repo's PRs. This repo writes no version file, so it passes.
+
+name: Release version check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  merge_group:
+
+concurrency:
+  group: release-version-check-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: read  # the PR's labels, read through the issues API
+  pull-requests: read
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # What to check: a pull request, or a merge queue group. Any other
+      # event is unexpected and fails. Every value is checked here and
+      # handed on as an output, never put into a script.
+      - name: Which event
+        id: event
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MG_BASE_REF: ${{ github.event.merge_group.base_ref }}
+          MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          MG_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=Release version check::$1"; exit 1; }
+          case "$EVENT" in
+            pull_request)
+              base_ref="$PR_BASE_REF" base_sha="$PR_BASE_SHA" head_sha="$PR_HEAD_SHA"
+              number="$PR_NUMBER" ;;
+            merge_group)
+              base_ref="${MG_BASE_REF#refs/heads/}" base_sha="$MG_BASE_SHA" head_sha="$MG_HEAD_SHA"
+              # gh-readonly-queue/<base>/pr-<N>-<sha>; no number, no label.
+              number=""
+              re='^refs/heads/gh-readonly-queue/.+/pr-([1-9][0-9]*)-[0-9a-f]{40}$'
+              if [[ "$MG_HEAD_REF" =~ $re ]]; then number="${BASH_REMATCH[1]}"; fi
+              # A group can hold several PRs; its ref names only the last.
+              note="a major release merges alone (merge queue batch size 1, or merge it outside a batch)."
+              if [ -z "$number" ]; then
+                echo "::warning title=Release version check::No PR number in the merge queue ref; a major version will be refused: $note"
+              else
+                echo "::notice title=Release version check::Merge queue: a major is allowed only when PR #$number has semver:major; $note"
+              fi ;;
+            *)
+              fail "unexpected event '$EVENT'; this check runs on pull_request and merge_group only." ;;
+          esac
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || fail "The event has no base commit."
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || fail "The event has no head commit."
+          if [ -z "$base_ref" ] || [[ "$base_ref" == *$'\n'* ]]; then fail "The event has no base branch."; fi
+          {
+            echo "base-ref=$base_ref"
+            echo "base-sha=$base_sha"
+            echo "head-sha=$head_sha"
+            echo "pr-number=$number"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Find this workflow's repository and commit
+        id: src
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          # owner/repo/.github/workflows/<file>@<ref>
+          repo="$(cut -d/ -f1,2 <<<"$WORKFLOW_REF")"
+          if ! [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+            || ! [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Cannot tell where this workflow runs from ('$WORKFLOW_REF')."
+            exit 1
+          fi
+          echo "repository=$repo" >> "$GITHUB_OUTPUT"
+          echo "sha=$WORKFLOW_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the check (not the pull request)
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.src.outputs.repository }}
+          ref: ${{ steps.src.outputs.sha }}
+          path: .release-version-check
+          sparse-checkout: .github/actions
+          persist-credentials: false
+
+      # The default branch takes releases only, and a release may not erase
+      # work that exists only there. The two rules are in main-gate.sh.
+      - name: Main gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_REF: ${{ steps.event.outputs.base-ref }}
+          BASE_SHA: ${{ steps.event.outputs.base-sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ steps.event.outputs.pr-number }}
+        run: bash ./.release-version-check/.github/actions/release-version-check/main-gate.sh
+
+      - name: Check the version
+        uses: ./.release-version-check/.github/actions/release-version-check
+        with:
+          base-ref: ${{ steps.event.outputs.base-ref }}
+          base-sha: ${{ steps.event.outputs.base-sha }}
+          head-sha: ${{ steps.event.outputs.head-sha }}
+          default-branch: ${{ github.event.repository.default_branch }}
+          pr-number: ${{ steps.event.outputs.pr-number }}

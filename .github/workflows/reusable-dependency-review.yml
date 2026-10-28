@@ -1,30 +1,44 @@
----
-# Flags newly-introduced dependencies with known vulnerabilities on a
-# PR. Opt-in — call it from a repo with:
+# Reusable workflow: Dependency review.
+#
+# Call from a caller workflow in a consuming repo:
 #
 #   jobs:
-#     dependency-review:
+#     review:
 #       uses: sas-technology/.github/.github/workflows/reusable-dependency-review.yml@main
-name: Reusable - Dependency review
+#       with:
+#         fail-on-severity: moderate
+#
+# The caller must grant:
+#   contents: read
+#   pull-requests: write
+
+name: Reusable / Dependency review
 
 on:
   workflow_call:
     inputs:
       fail-on-severity:
+        description: Lowest severity that fails the PR (low, moderate, high, critical).
         type: string
-        default: high
-        description: Minimum severity that fails the check (low|moderate|high|critical)
+        default: moderate
+      comment-summary-in-pr:
+        description: When to post the summary comment (never, always, on-failure).
+        type: string
+        default: on-failure
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
-  dependency-review:
-    name: dependency review
+  review:
+    name: Review dependencies
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/dependency-review-action@v5
+      # actions/dependency-review-action ships semver tags only (no rolling @v5).
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
         with:
           fail-on-severity: ${{ inputs.fail-on-severity }}
-          comment-summary-in-pr: always
+          comment-summary-in-pr: ${{ inputs.comment-summary-in-pr }}
+          fail-on-scopes: runtime, development

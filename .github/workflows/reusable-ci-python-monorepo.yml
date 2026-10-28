@@ -1,0 +1,169 @@
+# Reusable workflow: Python monorepo CI (uv workspace).
+#
+# Call from a caller workflow in a consuming repo:
+#
+#   jobs:
+#     ci:
+#       uses: sas-technology/.github/.github/workflows/reusable-ci-python-monorepo.yml@main
+#
+# The caller must grant `contents: read`.
+#
+# Assumes:
+#   - Root pyproject.toml with [tool.uv.workspace] members = ["packages/*"]
+#   - Root uv.lock (committed)
+#   - Per-package source under packages/<name>/
+#   - .python-version at the repo root
+#   - ruff, mypy, pytest declared as dev dependencies in the root pyproject.toml
+
+name: Reusable / CI / Python monorepo
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      any_python: ${{ steps.filter.outputs.any_python }}
+      root_changed: ${{ steps.filter.outputs.root_changed }}
+      packages: ${{ steps.packages.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4
+        with:
+          filters: |
+            any_python:
+              - '**/*.py'
+              - '**/pyproject.toml'
+              - 'uv.lock'
+              - '.python-version'
+              - '.github/workflows/**'
+            root_changed:
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.python-version'
+
+      - name: Compute affected packages
+        id: packages
+        env:
+          ROOT_CHANGED: ${{ steps.filter.outputs.root_changed }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          NULL_SHA="0000000000000000000000000000000000000000"
+          all_packages() {
+            if [ -d packages ]; then
+              find packages -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
+            fi
+          }
+
+          if [ "$ROOT_CHANGED" = "true" ] \
+             || [ -z "$BASE_SHA" ] \
+             || [ "$BASE_SHA" = "$NULL_SHA" ]; then
+            mapfile -t pkgs < <(all_packages)
+          else
+            mapfile -t pkgs < <(
+              git diff --name-only "$BASE_SHA" "$HEAD_SHA" \
+                | awk -F/ '$1=="packages" && NF>2 {print $2}' \
+                | sort -u
+            )
+          fi
+
+          json=$(printf '%s\n' "${pkgs[@]}" | jq -R . | jq -c -s 'map(select(length>0))')
+          echo "packages=$json" >> "$GITHUB_OUTPUT"
+          echo "Affected packages: $json"
+
+  lint:
+    name: ruff check
+    needs: changes
+    if: needs.changes.outputs.any_python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --frozen
+      - run: uv run ruff check .
+
+  format:
+    name: ruff format --check
+    needs: changes
+    if: needs.changes.outputs.any_python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --frozen
+      - run: uv run ruff format --check .
+
+  typecheck:
+    name: mypy
+    needs: changes
+    if: needs.changes.outputs.any_python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --frozen
+      - run: uv run mypy packages
+
+  audit:
+    name: pip-audit
+    needs: changes
+    if: needs.changes.outputs.any_python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --frozen
+      - name: pip-audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv export --frozen --no-hashes --quiet > /tmp/requirements.txt
+          uvx pip-audit --requirement /tmp/requirements.txt
+
+  test:
+    name: pytest (${{ matrix.package }})
+    needs: changes
+    if: needs.changes.outputs.packages != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.changes.outputs.packages) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --frozen
+      - name: pytest ${{ matrix.package }}
+        env:
+          PACKAGE: ${{ matrix.package }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Package names come from filesystem scan but still validate to be safe.
+          if [[ ! "$PACKAGE" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+            echo "::error::Invalid package name '$PACKAGE' — must match [a-zA-Z0-9_.-]+."
+            exit 1
+          fi
+          uv run --package "$PACKAGE" pytest "packages/$PACKAGE"

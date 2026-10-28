@@ -1,0 +1,92 @@
+# Reusable workflow: CycloneDX SBOM generation.
+#
+# Generates a Software Bill of Materials in CycloneDX JSON format and
+# uploads it as a build artifact. On tagged releases the SBOM is also
+# attached to the GitHub release.
+#
+# Every production release must ship a CycloneDX SBOM.
+#
+# Call from a release workflow in a consuming repo:
+#
+#   on:
+#     push:
+#       tags: ['v*']
+#
+#   jobs:
+#     sbom:
+#       uses: sas-technology/.github/.github/workflows/reusable-sbom.yml@main
+#       with:
+#         artifact-name: sbom-${{ github.ref_name }}
+#       permissions:
+#         contents: write
+#         packages: read
+#
+# The caller must grant:
+#   contents: write  (to attach the SBOM to a release)
+#   packages: read   (to inspect package manifests)
+
+name: Reusable / SBOM
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: Name for the uploaded SBOM artifact.
+        type: string
+        default: sbom
+      format:
+        description: SBOM output format (cyclonedx-json or cyclonedx-xml).
+        type: string
+        default: cyclonedx-json
+      upload-release-assets:
+        description: Attach the SBOM to the GitHub release (requires a tagged push).
+        type: boolean
+        default: true
+
+# No `permissions:` block on purpose: the job runs with exactly what the
+# caller grants. Direct callers with upload-release-assets:true grant
+# contents:write to attach the SBOM to a GitHub Release; reusable-release.yml
+# grants contents:read. A block here asking for contents:write made every
+# contents:read caller fail at startup ("requesting 'contents: write', but is
+# only allowed 'contents: read'"), so no release was ever cut through it.
+
+jobs:
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Generate SBOM (anchore/sbom-action)
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
+        with:
+          format: ${{ inputs.format }}
+          artifact-name: ${{ inputs.artifact-name }}.json
+          output-file: ${{ inputs.artifact-name }}.json
+          upload-artifact: true
+          upload-release-assets: ${{ inputs.upload-release-assets }}
+
+      - name: Verify SBOM is non-empty
+        env:
+          SBOM_FILE: ${{ inputs.artifact-name }}.json
+        run: |
+          set -euo pipefail
+          if [ ! -s "$SBOM_FILE" ]; then
+            echo "::error::SBOM file '$SBOM_FILE' is missing or empty - a valid CycloneDX SBOM is required on every release."
+            exit 1
+          fi
+          # Guard against anchore emitting a syntactically-valid but content-free document.
+          components=$(jq '.components // [] | length' "$SBOM_FILE")
+          if [ "$components" -eq 0 ]; then
+            echo "::error::SBOM '$SBOM_FILE' contains zero components — likely an sbom-action detection failure."
+            exit 1
+          fi
+          echo "SBOM OK: $components components in $SBOM_FILE"
+
+      - name: Print SHA-256 checksum of SBOM
+        env:
+          SBOM_FILE: ${{ inputs.artifact-name }}.json
+        run: |
+          set -euo pipefail
+          sha256sum "$SBOM_FILE"
+          echo "::notice::SBOM SHA-256 printed above. The release workflow includes this in SHA256SUMS."

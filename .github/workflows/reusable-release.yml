@@ -1,0 +1,220 @@
+# Reusable workflow: release.
+#
+# Standard SAS release flow triggered on a semver tag push.
+# Covers: changelog extraction, artefact upload, SBOM
+# attachment, and GitHub Release creation.
+#
+# Call from a release workflow in a consuming repo:
+#
+#   name: Release
+#   on:
+#     push:
+#       tags: ['v[0-9]*.[0-9]*.[0-9]*']
+#
+#   jobs:
+#     release:
+#       uses: sas-technology/.github/.github/workflows/reusable-release.yml@main
+#       with:
+#         artifact-paths: |
+#           dist/**
+#       permissions:
+#         contents: write
+#         packages: read
+#         id-token: write
+#
+# The caller must grant:
+#   contents: write  (to create a GitHub Release)
+#   packages: read   (SBOM package inspection)
+#   id-token: write  (optional — for sigstore signing)
+#   attestations: write (the release job attests build provenance; a caller
+#                    that does not grant it fails at startup, before any job)
+#
+# Releasing from the same workflow that creates the tag: pass it as `tag`.
+# A tag pushed with GITHUB_TOKEN starts no other workflow, so an org without
+# RELEASE_BUMP_TOKEN chains the two jobs in one run instead:
+#
+#   on:
+#     push:
+#       branches: [main]
+#   jobs:
+#     tag:
+#       uses: sas-technology/.github/.github/workflows/reusable-auto-tag.yml@main
+#       with:
+#         version-command: node -p "require('./package.json').version"
+#       permissions:
+#         contents: write
+#     release:
+#       needs: tag
+#       if: needs.tag.outputs.created == 'true'
+#       uses: sas-technology/.github/.github/workflows/reusable-release.yml@main
+#       with:
+#         tag: ${{ needs.tag.outputs.tag }}
+#       permissions:
+#         contents: write
+#         packages: read
+#         id-token: write
+#         attestations: write
+#
+# Inputs
+# ------
+# artifact-paths   Newline-separated globs of built artefacts to attach.
+#                  Leave empty if your repo has no binary artefacts.
+# draft            Publish as a draft release (default: false).
+# prerelease       Mark as a pre-release (default: false, auto-detected
+#                  for tags containing -rc, -alpha, or -beta).
+# node-version-file Path to the file pinning the Node version, used for
+#                  changelog extraction (default: .nvmrc).
+# tag              The tag to release. Default: the tag that started the run
+#                  (github.ref_name). Set it when the run began on a branch
+#                  push and an earlier job created the tag.
+
+name: Reusable / Release
+
+on:
+  workflow_call:
+    inputs:
+      artifact-paths:
+        description: |
+          Newline-separated globs of build artefacts to attach to the release.
+          Leave blank for repos without binary outputs.
+        type: string
+        default: ""
+      draft:
+        description: Create the release as a draft.
+        type: boolean
+        default: false
+      prerelease:
+        description: Mark as pre-release. Auto-detected from tag suffix if false.
+        type: boolean
+        default: false
+      node-version-file:
+        description: Path to the Node version file (used for changelog tooling).
+        type: string
+        default: .nvmrc
+      tag:
+        description: Tag to release. Defaults to the tag that started the run (github.ref_name).
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  validate-tag:
+    name: Validate semver tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      prerelease: ${{ steps.semver.outputs.prerelease }}
+      tag: ${{ steps.semver.outputs.tag }}
+    steps:
+      - name: Check tag format
+        id: semver
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not a valid semver tag (expected vX.Y.Z or vX.Y.Z-suffix)."
+            exit 1
+          fi
+          if [[ "$TAG" =~ -(rc|alpha|beta) ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=${{ inputs.prerelease }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  sbom:
+    name: Generate SBOM
+    needs: validate-tag
+    uses: sas-technology/.github/.github/workflows/reusable-sbom.yml@main
+    permissions:
+      contents: read
+      packages: read
+    with:
+      artifact-name: sbom-${{ needs.validate-tag.outputs.tag }}
+      upload-release-assets: false   # release job attaches it below
+
+  release:
+    name: Create GitHub release
+    needs: [validate-tag, sbom]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # publish the GitHub Release and attach assets
+      id-token: write      # Sigstore OIDC token for provenance signing
+      attestations: write  # write to the repository's attestation store
+    outputs:
+      hashes: ${{ steps.checksums.outputs.hashes }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.validate-tag.outputs.tag }}
+
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: sbom-${{ needs.validate-tag.outputs.tag }}.json
+          path: release-assets/
+
+      - name: Verify SBOM is present before publishing
+        env:
+          SBOM_FILE: release-assets/sbom-${{ needs.validate-tag.outputs.tag }}.json
+        run: |
+          set -euo pipefail
+          if [ ! -s "$SBOM_FILE" ]; then
+            echo "::error::SBOM '$SBOM_FILE' missing or empty - a valid CycloneDX SBOM is required on every release."
+            exit 1
+          fi
+
+      - name: Stage caller artefacts
+        if: inputs.artifact-paths != ''
+        env:
+          ARTIFACT_PATHS: ${{ inputs.artifact-paths }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          mkdir -p release-assets
+          copied=0
+          while IFS= read -r glob; do
+            [ -z "$glob" ] && continue
+            # shellcheck disable=SC2206
+            # Intentional word-splitting + globbing: $glob may be a shell pattern like 'dist/**'.
+            files=( $glob )
+            if [ ${#files[@]} -eq 0 ]; then
+              echo "::error::artifact-paths glob '$glob' matched no files."
+              exit 1
+            fi
+            cp -v "${files[@]}" release-assets/
+            copied=$((copied + ${#files[@]}))
+          done <<< "$ARTIFACT_PATHS"
+          echo "Staged $copied caller artefact(s)."
+
+      - name: Generate SHA-256 checksums
+        id: checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum -- * > SHA256SUMS
+          echo "=== SHA-256 checksums ==="
+          cat SHA256SUMS
+          # base64-encoded hashes for downstream provenance consumers.
+          echo "hashes=$(sha256sum -- * | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance (SLSA L2)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: "release-assets/*"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
+        with:
+          draft: ${{ inputs.draft }}
+          prerelease: ${{ needs.validate-tag.outputs.prerelease }}
+          tag_name: ${{ needs.validate-tag.outputs.tag }}
+          generate_release_notes: true
+          files: release-assets/*

@@ -1,0 +1,156 @@
+# Reusable workflow: TypeScript CI (pnpm, non-monorepo).
+#
+# Use this for standalone TypeScript projects — libraries, CLIs, services —
+# that do NOT use Turborepo. For Turborepo monorepos use
+# reusable-ci-nextjs-monorepo.yml instead.
+#
+# Call from a caller workflow in a consuming repo:
+#
+#   jobs:
+#     ci:
+#       uses: sas-technology/.github/.github/workflows/reusable-ci-typescript.yml@main
+#       with:
+#         node-version-file: .nvmrc
+#
+# The caller must grant `contents: read`.
+#
+# Assumes:
+#   - pnpm as the package manager with a pnpm-lock.yaml.
+#   - .nvmrc (or node-version-file) pinning Node 24+.
+#   - Scripts in package.json:
+#       "typecheck"  → tsc --noEmit (required)
+#       "lint"       → ESLint, Biome check, or equivalent (required)
+#       "test"       → Vitest, Jest, or equivalent (required)
+#       "build"      → tsc --build, tsup, esbuild, etc. (optional via skip-build)
+#   - All scripts exit non-zero on failure.
+#
+# Script names are configurable via inputs so repos using Biome ("check"
+# instead of "lint") or custom build pipelines can adopt this reusable
+# without changing their package.json.
+
+name: Reusable / CI / TypeScript
+
+on:
+  workflow_call:
+    inputs:
+      node-version-file:
+        description: Path to the file pinning the Node version (.nvmrc, .node-version, etc.).
+        type: string
+        default: .nvmrc
+      typecheck-script:
+        description: pnpm script for TypeScript type checking.
+        type: string
+        default: typecheck
+      lint-script:
+        description: pnpm script for linting (e.g. "lint" for ESLint, "check" for Biome).
+        type: string
+        default: lint
+      test-script:
+        description: pnpm script for running tests.
+        type: string
+        default: test
+      build-script:
+        description: pnpm script for building the package.
+        type: string
+        default: build
+      skip-build:
+        description: Skip the build job — use for pure type-level packages with no output artifact.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    name: tsc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ inputs.node-version-file }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: typecheck
+        env:
+          TYPECHECK_SCRIPT: ${{ inputs.typecheck-script }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$TYPECHECK_SCRIPT" =~ ^[a-zA-Z0-9_:.-]+$ ]]; then
+            echo "::error::Invalid typecheck-script '$TYPECHECK_SCRIPT' — must match [a-zA-Z0-9_:.-]+"
+            exit 1
+          fi
+          pnpm run "$TYPECHECK_SCRIPT"
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ inputs.node-version-file }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: lint
+        env:
+          LINT_SCRIPT: ${{ inputs.lint-script }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$LINT_SCRIPT" =~ ^[a-zA-Z0-9_:.-]+$ ]]; then
+            echo "::error::Invalid lint-script '$LINT_SCRIPT' — must match [a-zA-Z0-9_:.-]+"
+            exit 1
+          fi
+          pnpm run "$LINT_SCRIPT"
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ inputs.node-version-file }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: test
+        env:
+          TEST_SCRIPT: ${{ inputs.test-script }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$TEST_SCRIPT" =~ ^[a-zA-Z0-9_:.-]+$ ]]; then
+            echo "::error::Invalid test-script '$TEST_SCRIPT' — must match [a-zA-Z0-9_:.-]+"
+            exit 1
+          fi
+          pnpm run "$TEST_SCRIPT"
+
+  build:
+    name: build
+    if: ${{ !inputs.skip-build }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ inputs.node-version-file }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: build
+        env:
+          BUILD_SCRIPT: ${{ inputs.build-script }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$BUILD_SCRIPT" =~ ^[a-zA-Z0-9_:.-]+$ ]]; then
+            echo "::error::Invalid build-script '$BUILD_SCRIPT' — must match [a-zA-Z0-9_:.-]+"
+            exit 1
+          fi
+          pnpm run "$BUILD_SCRIPT"

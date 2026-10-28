@@ -1,22 +1,32 @@
 ---
-# Org-required lint check. This is the workflow referenced by the
-# "workflows" rule in github-rulesets/org-wide-main-protection.json
-# (GitHub's "required workflows" ruleset feature) — once that ruleset
-# is imported, GitHub runs THIS file on every pull request in every
-# repo in the org, without that repo needing a lint.yml of its own.
+# Org-required lint. The org ruleset names this file in a "Require
+# workflows to pass" rule, so GitHub runs it on every pull request and merge
+# queue group in every repo in the org - no per-repo lint.yml needed.
 #
-# It simply calls the reusable lint workflow. Uses the local-path form
-# (./.github/workflows/...) rather than an owner/repo@ref pin so it
-# always resolves against the ref this file itself is running from.
+# It calls reusable-lint.yml by owner/repo@ref, not by local path: when
+# GitHub runs this file on another repo's pull request, a local path would
+# look for the file in THAT repo. (This repo's own lint.yml dogfoods the
+# reusable by local path.) Once a release tag exists, pin the ref to the
+# commit SHA with the version as a comment, so a change to the reusable
+# cannot redden every repo at once.
+#
+# A repo's own .prettierrc, .prettierignore, .markdownlint.jsonc and
+# .yamllint.yaml at its root always win. Where one is missing, the reusable
+# workflow falls back to the canonical copy in sas-technology/.github.
 
-name: Org lint gate
+name: Org lint
 
 on:
   pull_request:
+  merge_group:
+
+concurrency:
+  group: org-lint-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   lint:
-    uses: ./.github/workflows/reusable-lint.yml
+    uses: sas-technology/.github/.github/workflows/reusable-lint.yml@main

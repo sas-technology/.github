@@ -1,0 +1,370 @@
+# Composite action: does a pull request (or a merge queue group) write a
+# version the org versioning policy allows? The logic behind
+# .github/workflows/release-version-check.yml, kept here
+# so that workflow stays a thin wrapper.
+#
+#   Into `staging`               PATCH  x.y.z -> x.y.(z+1)
+#   Into the default branch      MINOR  x.y.z -> x.(y+1).0
+#   MAJOR                        only with the `semver:major` label
+#
+# The policy itself is next-version.mjs, called here as
+# is; nothing in this file restates it.
+#
+# It is a required check, so it FAILS CLOSED: whatever it cannot positively
+# verify, it refuses. Any API failure is a hard error asking for a re-run.
+#
+# What it does:
+#
+#   1. Finds the merge-base of the base tip and the head (the compare API;
+#      a missing or malformed answer is a hard error). The PR is judged
+#      against what it started from, so a version bump that landed on the
+#      base after the PR branched is not mistaken for the PR's own change.
+#   2. Reads every version file read-version.mjs knows (package.json,
+#      Cargo.toml, pyproject.toml, VERSION) at the merge-base, the head and
+#      the base tip through the contents API, as JSON: only a `file` counts
+#      as one (a directory or symlink there is invalid, unless it is the
+#      same on both sides). A 404 means the file is absent. Nothing from the
+#      PR is checked out or run.
+#   3. read-version.mjs assess reads each entry (package.json; each TOML
+#      table; VERSION) as absent, valid or invalid, with one JSON reader and
+#      one TOML reader (Python's json and tomllib) and one version parser
+#      (next-version.mjs isStrictVersion: MAJOR.MINOR.PATCH, each 0..999).
+#      Per entry:
+#        invalid    the head value is invalid and differs from the merge-base
+#        removed    a real version (not 0.0.0) at the merge-base is gone,
+#                   reset to 0.0.0 or broken at the head
+#        downgrade  the head is lower than the real merge-base version
+#        behind     the PR changes the version, but the base tip already
+#                   holds a higher one: rebase first
+#        check      the head is a real version and differs from the
+#                   merge-base (new or changed): `next-version.mjs decide
+#                   --mode check` decides; all must pass
+#      invalid, removed, downgrade and behind are refused, always. Removing
+#      or resetting a version (a version moving into code, say) needs an
+#      owner bypass of the check.
+#   4. Nothing to do: the PR writes no version. It passes, and the summary
+#      shows the version the merge will be tagged with (`decide --mode
+#      compute`).
+#
+# EVERY version decision is next-version.mjs `decide`, the one the
+# next-version action makes too, over all the repo's tags and the version
+# written at the merge-base; this script only fetches and reports. In short:
+# the current version is the higher of the highest version tag (a tag named
+# exactly <prefix><strict version>) and the version the files already write,
+# so files ahead of the tags never deadlock the repo; with neither, a first
+# release from 0.0.0 (0.0.1 on staging, 0.1.0 on main, or 1.0.0 with the
+# label). With the default prefix, a repo with tags but no version tag
+# (another scheme, pre-releases only) cannot be verified, so a PR that
+# writes or changes a version there is refused; with another prefix (a
+# monorepo component), other tags are ignored. A version equal to the
+# current, tagged one is "already tagged"; anything else goes through the
+# policy, so a downgrade to an old tag is refused. 0.0.0 is a placeholder in
+# every file and never checked.
+#
+# Every answer read from a script is checked before it is used: the
+# read-version output starts with its header line and the `written` line,
+# `decide` answers "ok <version> <current> <reason>" (two strict versions)
+# or refuses with a reason, and `strict` echoes the version it was given. A
+# missing or malformed answer is a hard error.
+#
+# The channel is `main` when the base is the repo's default branch and
+# `staging` for any other base.
+#
+# The `semver:major` label is read from the PR through the API when the job
+# runs, not from the event payload, so adding the label and pressing
+# "Re-run" is enough. With no PR number (a merge queue head ref that does
+# not name one), no label is read, and a major is refused. A merge queue
+# group can hold several PRs while its ref names only the last one, so a
+# major is allowed there only when that PR has the label: a major release
+# merges alone (merge queue batch size 1, or merge it outside a batch).
+#
+# Every value from the event arrives through an input and an env var, never
+# through `${{ }}` inside the script, so no PR title, branch name or label
+# can inject shell. Only strict versions are ever printed.
+#
+# Reads with `token` (contents: read and pull-requests: read on the repo).
+# Writes nothing but the step summary. Needs python3 >= 3.11 (tomllib),
+# which every GitHub-hosted Ubuntu runner has; without it the check fails.
+
+name: Release version check
+description: Check the version a pull request writes against the org versioning policy.
+
+inputs:
+  base-ref:
+    description: Branch the PR (or merge group) targets, without refs/heads/.
+    required: true
+  base-sha:
+    description: Base branch tip (pull_request.base.sha or merge_group.base_sha).
+    required: true
+  head-sha:
+    description: Head commit (pull_request.head.sha or merge_group.head_sha).
+    required: true
+  default-branch:
+    description: The repo's default branch (github.event.repository.default_branch).
+    required: true
+  pr-number:
+    description: The PR's number, to read its labels. Empty reads no labels.
+    required: false
+    default: ""
+  repository:
+    description: owner/repo of the PR.
+    required: false
+    default: ${{ github.repository }}
+  tag-prefix:
+    description: Prefix of the version tags.
+    required: false
+    default: v
+  token:
+    description: Token that can read the repo's contents, tags and PR labels.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  result:
+    description: "'unchanged' or 'allowed' (the step fails otherwise)."
+    value: ${{ steps.run.outputs.result }}
+  version:
+    description: The versions the PR writes, space-separated (empty when none).
+    value: ${{ steps.run.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        BASE_REF: ${{ inputs.base-ref }}
+        BASE_SHA: ${{ inputs.base-sha }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+        DEFAULT_BRANCH: ${{ inputs.default-branch }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        REPO: ${{ inputs.repository }}
+        PREFIX: ${{ inputs.tag-prefix }}
+        GH_TOKEN: ${{ inputs.token }}
+        LIB: ${{ github.action_path }}/../next-version
+      run: |
+        set -euo pipefail
+        summary() { printf '%s\n' "$@" >> "$GITHUB_STEP_SUMMARY"; }
+        die() { echo "::error title=Release version check::$1"; exit 1; }
+        sha_re='^[0-9a-f]{40}$'
+
+        [[ "$BASE_SHA" =~ $sha_re ]] || die "The base commit is not a commit SHA."
+        [[ "$HEAD_SHA" =~ $sha_re ]] || die "The head commit is not a commit SHA."
+
+        nv="$LIB/next-version.mjs"
+        # strict <version>: a strict version echoes itself; anything else
+        # (or no answer) is not one. The same in both actions.
+        strict() {
+          local out
+          out="$(node "$nv" strict --version "$1" 2>/dev/null)" || return 1
+          [ "$out" = "$1" ]
+        }
+
+        channel=staging
+        [ "$BASE_REF" = "$DEFAULT_BRANCH" ] && channel=main
+
+        # The label is read now, not from the event, so a re-run sees it. A
+        # failed read stops the check: it never quietly means "no label".
+        allow_major=false
+        if [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+          labels="$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/labels" --jq '.[].name')" \
+            || die "Could not read the PR's labels; re-run the check."
+          if grep -qxF 'semver:major' <<<"$labels"; then allow_major=true; fi
+        fi
+
+        # The merge-base: what the PR started from. The compare API also
+        # proves both commits exist.
+        merge_base="$(gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA?per_page=1" --jq .merge_base_commit.sha)" \
+          || die "Could not compare the base and head commits; re-run the check."
+        [[ "$merge_base" =~ $sha_re ]] || die "The compare API gave no merge-base; re-run the check."
+
+        # read-version's answers start with a header line; anything else
+        # (empty, cut short, a script that did not run) is a hard error.
+        header() {
+          [ "${2%%$'\n'*}" = "$1" ] || die "read-version gave no answer ('$1' missing); re-run the check."
+        }
+
+        # fetch <sha> <path> <out>: 0 = got it, 1 = not there. The contents
+        # API answers as JSON; read-version save writes a file's bytes, or
+        # <out>.notfile for a directory or symlink (judged as invalid unless
+        # it is the same on both sides).
+        fetch() {
+          local err="$RUNNER_TEMP/rvc-err" json="$RUNNER_TEMP/rvc-json" saved
+          if gh api "repos/$REPO/contents/$2?ref=$1" > "$json" 2> "$err"; then
+            saved="$(node "$LIB/read-version.mjs" save "$2" "$3" < "$json")" \
+              || die "Could not read $2 at $1 in $REPO (see the log); re-run the check."
+            header '# read-version save v1' "$saved"
+            return 0
+          fi
+          if grep -q 'HTTP 404' "$err"; then return 1; fi
+          cat "$err" >&2
+          die "Could not read $2 at $1 in $REPO; re-run the check."
+        }
+
+        files_out="$(node "$LIB/read-version.mjs" files)" \
+          || die "read-version failed (see the log); re-run the check."
+        header '# read-version files v1' "$files_out"
+        files="$(sed 1d <<<"$files_out")"
+        [ -n "$files" ] || die "read-version listed no version files."
+        dirs="$RUNNER_TEMP/rvc"
+        rm -rf "$dirs"
+        mkdir -p "$dirs/base" "$dirs/head" "$dirs/tip"
+        while IFS= read -r f; do
+          fetch "$merge_base" "$f" "$dirs/base/$f" || true
+          fetch "$HEAD_SHA" "$f" "$dirs/head/$f" || true
+          if [ "$BASE_SHA" = "$merge_base" ]; then
+            for got in "$dirs/base/$f" "$dirs/base/$f.notfile"; do
+              if [ -e "$got" ]; then cp "$got" "$dirs/tip/"; fi
+            done
+          else
+            fetch "$BASE_SHA" "$f" "$dirs/tip/$f" || true
+          fi
+        done <<<"$files"
+
+        # written <TAB> version or -, then per entry:
+        # entry <TAB> action <TAB> merge-base <TAB> head <TAB> tip
+        assess_out="$(node "$LIB/read-version.mjs" assess "$dirs/base" "$dirs/head" "$dirs/tip")" \
+          || die "read-version could not read the version files (see the log); re-run the check."
+        header '# read-version assess v2' "$assess_out"
+        body="$(sed 1d <<<"$assess_out")"
+        written_line="${body%%$'\n'*}"
+        [[ "$written_line" == written$'\t'* ]] || die "read-version gave no 'written' line; re-run the check."
+        written="${written_line#written$'\t'}"
+        [ "$written" = - ] || strict "$written" || die "read-version gave a bad 'written' version."
+        todo="$(sed 1d <<<"$body")"
+
+        # Every version decision is next-version.mjs `decide`, the same
+        # one the next-version action makes, over ALL tags (not
+        # prefix-filtered) and the version written at the merge-base.
+        # The tags decide needs: every tag for the default prefix, else the
+        # prefix's own (next-version.mjs tags-path). The same in both actions.
+        if ! tag_path="$(node "$nv" tags-path --repo "$REPO" -- "$PREFIX")" \
+          || [[ "$tag_path" != "repos/$REPO/git/matching-refs/tags"* ]]; then
+          die "next-version tags-path gave no path."
+        fi
+        refs="$(gh api --paginate "$tag_path" --jq '.[].ref')" \
+          || die "Could not read the repo's tags; re-run the check."
+        from_files=()
+        [ "$written" = - ] || from_files=(--from-files "$written")
+        # decide <mode> [--proposed <v>]: 0 with $d_version, $d_current and
+        # $d_reason set, or 1 with $d_reason the refusal. A malformed answer
+        # is a hard error.
+        ok_re='^ok ([^ ]+) ([^ ]+) (.+)$'
+        # Only stdout is the answer; stderr (the reason, or a crash) goes to
+        # the log.
+        # DECIDE_NO_FILES=1 leaves the files' version out: the entry is
+        # judged against the tags alone.
+        decide() {
+          local out rc=0 err="$RUNNER_TEMP/rvc-decide-err" files=()
+          if [ -z "${DECIDE_NO_FILES:-}" ]; then
+            files=(${from_files[@]+"${from_files[@]}"})
+          fi
+          out="$(printf '%s\n' "$refs" | node "$nv" decide --mode "$1" \
+            --channel "$channel" --allow-major "$allow_major" \
+            ${files[@]+"${files[@]}"} "${@:2}" -- "$PREFIX" 2> "$err")" || rc=$?
+          case "$rc" in
+            0)
+              if [ -s "$err" ]; then cat "$err" >&2; fi
+              [[ "$out" =~ $ok_re ]] || die "next-version decide gave no answer; re-run the check."
+              d_version="${BASH_REMATCH[1]}" d_current="${BASH_REMATCH[2]}" d_reason="${BASH_REMATCH[3]}"
+              if ! strict "$d_version" || ! strict "$d_current"; then
+                die "next-version decide gave a bad version; re-run the check."
+              fi
+              echo "decide $1: $out"
+              return 0 ;;
+            2)
+              # The policy says no: the first line is the reason (reported
+              # by the caller); the rest, if any, goes to the log.
+              sed 1d "$err" >&2
+              d_reason="$(head -n 1 "$err")"
+              d_reason="${d_reason#::error::}"
+              d_reason="${d_reason#policy: }"
+              [ -n "$d_reason" ] || die "next-version decide refused without a reason; re-run the check."
+              echo "decide $1: refused: $d_reason"
+              return 1 ;;
+            *)
+              # A bad call, a crash: never a refusal or a warning.
+              cat "$err" >&2
+              die "next-version decide failed (exit $rc, see the log); re-run the check." ;;
+          esac
+        }
+
+        # What the merge will be tagged with when it writes no version.
+        if decide compute; then
+          next="$d_version" current="$d_current" next_why="$d_reason"
+        else
+          next="" current="-" next_why="$d_reason"
+        fi
+
+        summary "## Release version check" "" \
+          "| | |" "|---|---|" \
+          "| Channel | \`$channel\` (base \`$BASE_REF\`, default \`$DEFAULT_BRANCH\`) |" \
+          "| Current version | \`$current\` |" \
+          "| semver:major | $allow_major |" ""
+
+        if [ -z "$todo" ]; then
+          echo "version=" >> "$GITHUB_OUTPUT"
+          echo "result=unchanged" >> "$GITHUB_OUTPUT"
+          if [ -n "$next" ]; then
+            summary "This PR writes no new version. When it merges, the merge is" \
+              "tagged \`$PREFIX$next\` ($next_why)."
+            echo "No version change in this PR; the merge will be tagged $PREFIX$next ($next_why)."
+          else
+            summary "This PR writes no new version, but the policy has no next" \
+              "version for it: $next_why"
+            echo "::warning::No version change in this PR, but: $next_why"
+          fi
+          if [ "$allow_major" = true ]; then
+            summary "" "The \`semver:major\` label only matters for a PR that writes a major version."
+          fi
+          exit 0
+        fi
+
+        summary "| Entry | Merge-base | Head | Base tip | Result |" "|---|---|---|---|---|"
+        written_now=""
+        failed=0
+        while IFS=$'\t' read -r entry action base head tip; do
+          [ "$head" = '!invalid' ] || [ "$head" = - ] || written_now="${written_now:+$written_now }$head"
+          case "$action" in
+            invalid)
+              ok=false why="the head does not hold a version (MAJOR.MINOR.PATCH, each 0..999, nothing else)." ;;
+            removed)
+              ok=false why="version removed or reset ($base at the merge-base). That needs an owner bypass of this check." ;;
+            downgrade)
+              ok=false why="$head is lower than $base, the version at the merge-base." ;;
+            behind)
+              ok=false why="rebase onto $BASE_REF: it is now at $tip." ;;
+            check)
+              # An entry that writes the version the repo already writes
+              # (one more file at the same version) is judged against the
+              # tags alone: --from-files is the version before the change.
+              no_files=""
+              if [ "$head" = "$written" ]; then no_files=1; fi
+              if DECIDE_NO_FILES="$no_files" decide check --proposed "$head"; then
+                ok=true why="$d_reason"
+              else
+                ok=false why="$d_reason"
+                case "$why" in
+                  *"bump: major"*) why="$why On a pull request, the semver:major label allows a major." ;;
+                esac
+              fi ;;
+            *)
+              ok=false why="unknown action '$action'." ;;
+          esac
+          if [ "$ok" = true ]; then
+            summary "| $entry | $base | $head | $tip | allowed ($why) |"
+            echo "$entry: $base -> $head on $channel: allowed ($why)."
+          else
+            failed=$((failed + 1))
+            summary "| $entry | $base | $head | $tip | **refused**: $why |"
+            echo "::error title=Release version check::$entry: $why"
+          fi
+        done <<<"$todo"
+        echo "version=$written_now" >> "$GITHUB_OUTPUT"
+
+        if [ "$failed" -gt 0 ]; then
+          summary "" "Set each refused entry to the version the policy allows, or leave the" \
+            "version alone and let the merge be tagged. A major needs the \`semver:major\` label."
+          exit 1
+        fi
+        echo "result=allowed" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,178 @@
+# Tests for the composite actions in .github/actions/, and for the guard in
+# reusable-staging-release.yml.
+#
+# next-version holds the org's versioning policy (patch on staging, minor on
+# main, major by hand, 999 ceiling), and read-version.mjs beside it reads a
+# repo's version from package.json, Cargo.toml, pyproject.toml or VERSION;
+# their tests run on Node's built-in runner, with no install step.
+# version-fixtures.test.mjs feeds every entry of version-fixtures.json (the
+# table any other consumer can test against) to the strict parser, every
+# version-file reader and the CLI, which must all agree.
+#
+# release-version-check runs the action's script against a fake gh in
+# test.sh (refused and allowed versions, labels, tag schemes, version files),
+# then runs the action itself on this repo's own merge commit, which writes no
+# version, so it must pass as "unchanged".
+#
+# staging-release-guard extracts the "Refuse anything but staging" step's
+# script from reusable-staging-release.yml and runs it in a scratch repo, on a
+# staging ref and a main ref, with and without an explicit `ref:`, and as a
+# main release (bump: minor or major on main, with create-release: false).
+
+name: Test actions
+
+on:
+  pull_request:
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/reusable-staging-release.yml"
+      - ".github/workflows/release-version-check.yml"
+      - ".github/workflows/test-actions.yml"
+  push:
+    branches: [main, staging]
+    paths:
+      - ".github/actions/**"
+      - ".github/workflows/reusable-staging-release.yml"
+      - ".github/workflows/release-version-check.yml"
+      - ".github/workflows/test-actions.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  next-version:
+    name: next-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Unit tests
+        run: >-
+          node --test
+          .github/actions/next-version/next-version.test.mjs
+          .github/actions/next-version/read-version.test.mjs
+          .github/actions/next-version/version-fixtures.test.mjs
+      - name: The action computes from this repo's tags
+        id: next
+        uses: ./.github/actions/next-version
+        with:
+          channel: staging
+      - name: The action checks a proposed version
+        uses: ./.github/actions/next-version
+        with:
+          channel: main
+          current: 0.27.3
+          proposed: 0.28.0
+      - name: Show
+        env:
+          CURRENT: ${{ steps.next.outputs.current }}
+          VERSION: ${{ steps.next.outputs.version }}
+        run: echo "Tags say $CURRENT; the next staging version is $VERSION."
+
+  release-version-check:
+    name: release-version-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Refusal and pass paths, against a fake gh
+        run: bash .github/actions/release-version-check/test.sh
+      - name: A commit with no version file passes as unchanged
+        id: rvc
+        uses: ./.github/actions/release-version-check
+        with:
+          base-ref: staging
+          base-sha: ${{ github.sha }}
+          head-sha: ${{ github.sha }}
+          default-branch: main
+      - name: Result
+        env:
+          RESULT: ${{ steps.rvc.outputs.result }}
+        run: test "$RESULT" = unchanged
+
+  staging-release-guard:
+    name: staging-release guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: The guard passes staging and refuses main
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/guard.sh"
+          yq -e '.jobs.tag.steps[] | select(.id == "guard") | .run' \
+            .github/workflows/reusable-staging-release.yml > "$script"
+          test -s "$script"
+
+          # A scratch repo: commit S is on staging, commit M is on main only.
+          repo="$RUNNER_TEMP/scratch"
+          git init -q -b main "$repo"
+          git -C "$repo" -c user.name=t -c user.email=t@example.invalid \
+            commit -q --allow-empty -m S
+          S="$(git -C "$repo" rev-parse HEAD)"
+          git -C "$repo" update-ref refs/remotes/origin/staging "$S"
+          git -C "$repo" -c user.name=t -c user.email=t@example.invalid \
+            commit -q --allow-empty -m M
+          M="$(git -C "$repo" rev-parse HEAD)"
+
+          fails=0
+          # expect <pass|fail> <checked-out commit> <github.ref> <inputs.ref> <label>
+          #        [inputs.bump] [inputs.create-release, default true]
+          expect() {
+            local want="$1" commit="$2" run_ref="$3" input_ref="$4" label="$5"
+            local bump="${6:-}" create="${7:-true}" got out
+            git -C "$repo" checkout -q --detach "$commit"
+            if out="$(cd "$repo" && RUN_REF="$run_ref" INPUT_REF="$input_ref" BUMP="$bump" \
+              CREATE_RELEASE="$create" bash "$script" 2>&1)"; then
+              got=pass
+            else
+              got=fail
+            fi
+            if [ "$got" = fail ] && ! grep -q '^::error::' <<<"$out"; then
+              got="fail without ::error::"
+            fi
+            if [ "$got" = "$want" ]; then
+              echo "ok   $label ($got)"
+            else
+              echo "FAIL $label: wanted $want, got $got"
+              while IFS= read -r line; do echo "     | $line"; done <<<"$out"
+              fails=$((fails + 1))
+            fi
+          }
+
+          expect pass "$S" refs/heads/staging ""      "push to staging"
+          expect fail "$M" refs/heads/main    ""      "Run workflow on main"
+          expect fail "$M" refs/heads/main    ""      "Run workflow on main, bump: patch" patch
+          expect fail "$M" refs/heads/staging main    "staging run, ref: main"
+          # Run workflow on main with a non-patch bump, from staging-version.yml
+          # (create-release left at its default, true): still refused.
+          expect fail "$M" refs/heads/main    ""      "Run workflow on main, bump: minor" minor
+          expect fail "$M" refs/heads/main    ""      "Run workflow on main, bump: major" major
+          # A main release (super-app-web's main-release.yml): minor or major on
+          # main with create-release: false.
+          expect pass "$M" refs/heads/main    ""      "main release, bump: minor" minor false
+          expect pass "$M" refs/heads/main    ""      "main release, bump: major" major false
+          expect fail "$M" refs/heads/main    ""      "main, create-release: false, bump: patch" patch false
+          expect fail "$M" refs/heads/feature ""      "feature branch, bump: minor" minor false
+          expect fail "$S" refs/tags/v1.0.0   ""      "run on a tag"
+          expect pass "$S" refs/heads/main    staging "main run, ref: staging"
+          expect pass "$S" refs/heads/main    "$S"    "main run, ref: a staging commit"
+          expect fail "$M" refs/heads/main    main    "main run, ref: main"
+          expect fail "$M" refs/heads/main    "$M"    "main run, ref: a main-only commit"
+
+          # No staging branch at all: an explicit ref cannot be checked.
+          git -C "$repo" update-ref -d refs/remotes/origin/staging
+          expect fail "$S" refs/heads/main    "$S"    "ref: with no staging branch"
+
+          [ "$fails" -eq 0 ] || { echo "$fails guard case(s) failed."; exit 1; }

@@ -1,0 +1,206 @@
+# Reusable workflow: Docker container CI.
+#
+# Lints the Dockerfile with hadolint, validates it builds successfully,
+# and scans the built image for known CVEs using Trivy. Results are
+# uploaded to the GitHub Security tab as a SARIF report.
+#
+# The workflow does NOT push images to any registry. It is a CI gate
+# for pull requests and pushes. Registry push belongs in a separate
+# release or deploy workflow.
+#
+# Call from a caller workflow in a consuming repo:
+#
+#   jobs:
+#     docker:
+#       uses: sas-technology/.github/.github/workflows/reusable-ci-docker.yml@main
+#       with:
+#         dockerfile: Dockerfile
+#         image-name: my-service
+#       permissions:
+#         contents: read
+#         security-events: write
+#
+# The caller must grant:
+#   contents: read
+#   security-events: write   (to upload Trivy SARIF to GitHub Security tab)
+
+name: Reusable / CI / Docker
+
+on:
+  workflow_call:
+    inputs:
+      dockerfile:
+        description: Relative path to the Dockerfile to lint and build.
+        type: string
+        default: Dockerfile
+      context:
+        description: Docker build context directory.
+        type: string
+        default: "."
+      image-name:
+        description: |
+          Local tag applied to the built image (used for the Trivy scan).
+          Must match [a-z0-9][a-z0-9._-]*.
+        type: string
+        default: ci-image
+      trivy-severity:
+        description: |
+          Comma-separated CVE severities that fail the severity gate.
+          Set to '' to report findings without failing the job.
+        type: string
+        default: "CRITICAL,HIGH"
+      hadolint-version:
+        description: hadolint release version to install (semver, no leading v).
+        type: string
+        default: "2.12.0"
+      trivy-version:
+        description: Trivy release version to install (semver, no leading v).
+        type: string
+        default: "0.58.2"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4
+        with:
+          filters: |
+            docker:
+              - '**/Dockerfile'
+              - '**/Dockerfile.*'
+              - '**/.dockerignore'
+              - '.github/workflows/**'
+
+  hadolint:
+    name: hadolint
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install hadolint
+        env:
+          HADOLINT_VERSION: ${{ inputs.hadolint-version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$HADOLINT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid hadolint-version '$HADOLINT_VERSION' — expected semver without leading v."
+            exit 1
+          fi
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-delay 2 \
+            "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-x86_64" \
+            --output /usr/local/bin/hadolint
+          chmod +x /usr/local/bin/hadolint
+          hadolint --version
+      - name: Lint Dockerfile
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Guard against directory traversal via inputs.dockerfile.
+          if [[ "$DOCKERFILE" =~ \.\.  ]] || [[ "$DOCKERFILE" =~ ^/ ]]; then
+            echo "::error::dockerfile '$DOCKERFILE' must be a relative path without '..'."
+            exit 1
+          fi
+          hadolint --format tty "$DOCKERFILE"
+
+  build-and-scan:
+    name: docker build + trivy scan
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: docker build
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          CONTEXT: ${{ inputs.context }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$DOCKERFILE" =~ \.\. ]] || [[ "$DOCKERFILE" =~ ^/ ]]; then
+            echo "::error::dockerfile must be a relative path without '..'."
+            exit 1
+          fi
+          if [[ ! "$IMAGE_NAME" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+            echo "::error::image-name '$IMAGE_NAME' must be lowercase alphanumeric (hyphens, dots, underscores allowed)."
+            exit 1
+          fi
+          docker build \
+            --file "$DOCKERFILE" \
+            --tag "${IMAGE_NAME}:ci" \
+            "$CONTEXT"
+
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: ${{ inputs.trivy-version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$TRIVY_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid trivy-version '$TRIVY_VERSION' — expected semver without leading v."
+            exit 1
+          fi
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-delay 2 \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.deb" \
+            --output /tmp/trivy.deb
+          sudo dpkg -i /tmp/trivy.deb
+          trivy --version
+
+      - name: Trivy scan — generate SARIF
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # exit-code 0: always produce the report; severity gate runs separately.
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --exit-code 0 \
+            "${IMAGE_NAME}:ci"
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-docker
+
+      - name: Trivy scan — severity gate
+        if: inputs.trivy-severity != ''
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+          TRIVY_SEVERITY: ${{ inputs.trivy-severity }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Validate severity string to guard against injection via inputs.trivy-severity.
+          if [[ ! "$TRIVY_SEVERITY" =~ ^[A-Z]+(,[A-Z]+)*$ ]]; then
+            echo "::error::trivy-severity '$TRIVY_SEVERITY' must be a comma-separated list of uppercase severities (e.g. CRITICAL,HIGH)."
+            exit 1
+          fi
+          trivy image \
+            --severity "$TRIVY_SEVERITY" \
+            --exit-code 1 \
+            --format table \
+            "${IMAGE_NAME}:ci"

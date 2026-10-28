@@ -1,43 +1,61 @@
----
-# CodeQL static analysis. Opt-in — call it from a repo with:
+# Reusable workflow: CodeQL static analysis.
+#
+# Call from a caller workflow in a consuming repo:
 #
 #   jobs:
-#     codeql:
+#     analyze:
 #       uses: sas-technology/.github/.github/workflows/reusable-codeql.yml@main
 #       with:
-#         languages: '[{"language": "javascript-typescript"}, {"language": "python"}]'
+#         languages: '[{"language":"javascript-typescript","build-mode":"none"}]'
 #
-# Supported language values (as of CodeQL's current support):
-# javascript-typescript, python, swift, java-kotlin, go, c-cpp, ruby,
-# csharp. Pick the ones that match the repo.
-name: Reusable - CodeQL
+# The caller must grant:
+#   actions: read
+#   contents: read
+#   security-events: write
+#   packages: read
+#
+# The `languages` input is a JSON array of { language, build-mode } objects.
+# Valid `language` values: javascript-typescript, python, c-cpp, java-kotlin,
+# csharp, go, ruby, swift. Valid `build-mode` values: none, autobuild, manual.
+
+name: Reusable / CodeQL
 
 on:
   workflow_call:
     inputs:
       languages:
+        description: JSON array of { language, build-mode } objects (see header).
         type: string
         required: true
-        description: JSON array of {language, build-mode?} objects
+      queries:
+        description: CodeQL query suites to run.
+        type: string
+        default: "security-extended,security-and-quality"
 
 permissions:
+  actions: read
   contents: read
   security-events: write
+  packages: read
 
 jobs:
   analyze:
-    name: CodeQL (${{ matrix.lang.language }})
+    name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        lang: ${{ fromJSON(inputs.languages) }}
+        include: ${{ fromJSON(inputs.languages) }}
     steps:
       - uses: actions/checkout@v7
       - uses: github/codeql-action/init@v4
         with:
-          languages: ${{ matrix.lang.language }}
-          build-mode: ${{ matrix.lang.build-mode || 'autobuild' }}
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: ${{ inputs.queries }}
+      - if: matrix.build-mode == 'autobuild'
+        uses: github/codeql-action/autobuild@v4
       - uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:${{ matrix.lang.language }}"
+          category: "/language:${{ matrix.language }}"
