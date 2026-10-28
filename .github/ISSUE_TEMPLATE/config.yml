@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/sas-technology/.github/blob/main/SECURITY.md
+    about: Do NOT open a public issue for a security or data-handling vulnerability. Follow SECURITY.md to report it privately instead.

@@ -1,0 +1,30 @@
+---
+# Flags newly-introduced dependencies with known vulnerabilities on a
+# PR. Opt-in — call it from a repo with:
+#
+#   jobs:
+#     dependency-review:
+#       uses: sas-technology/.github/.github/workflows/reusable-dependency-review.yml@main
+name: Reusable - Dependency review
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-severity:
+        type: string
+        default: high
+        description: Minimum severity that fails the check (low|moderate|high|critical)
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: dependency review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: ${{ inputs.fail-on-severity }}
+          comment-summary-in-pr: always

@@ -1,0 +1,9 @@
+# CODEOWNERS for this repo (sas-technology/.github itself).
+# Changes here affect every repo in the org by default — route them
+# through a maintainer.
+#
+# NOTE: @sas-technology/maintainers must exist as a real GitHub team
+# before this has any effect. See the PR that introduced this file for
+# the one-time setup an org owner needs to do.
+
+* @sas-technology/maintainers

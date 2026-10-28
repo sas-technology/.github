@@ -1,0 +1,67 @@
+{
+  "name": "org-wide-main-protection",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["~DEFAULT_BRANCH"],
+      "exclude": []
+    },
+    "repository_name": {
+      "include": ["~ALL"],
+      "exclude": ["sandbox-*", "archive-*"],
+      "protected": false
+    }
+  },
+  "bypass_actors": [
+    {
+      "actor_id": 1,
+      "actor_type": "OrganizationAdmin",
+      "bypass_mode": "always"
+    }
+  ],
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 1,
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": true,
+        "require_extra_approval_for_unattributed_changes": false,
+        "required_reviewers": [],
+        "allowed_merge_methods": ["squash", "rebase"]
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          { "context": "lint / actionlint" },
+          { "context": "lint / JSON validity" },
+          { "context": "lint / prettier" },
+          { "context": "lint / markdownlint" },
+          { "context": "lint / yamllint" }
+        ]
+      }
+    },
+    {
+      "type": "workflows",
+      "parameters": {
+        "do_not_enforce_on_create": false,
+        "workflows": [
+          {
+            "repository_id": 1211111495,
+            "path": ".github/workflows/org-lint.yml",
+            "ref": "refs/heads/main"
+          }
+        ]
+      }
+    }
+  ]
+}

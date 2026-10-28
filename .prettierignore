@@ -1,0 +1,21 @@
+# Standard ignores
+node_modules/
+.git/
+.build/
+
+# Files with structural meaning that Prettier would harm
+LICENSE
+CODEOWNERS
+CODEOWNERS.example
+.github/CODEOWNERS
+
+# YAML is handled by yamllint and actionlint, not Prettier.
+*.yml
+*.yaml
+
+# Lockfiles, generated output
+*-lock.json
+*-lock.yaml
+package-lock.json
+pnpm-lock.yaml
+Package.resolved

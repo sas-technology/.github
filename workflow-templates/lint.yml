@@ -1,0 +1,16 @@
+---
+# This appears in the "Actions" tab's "New workflow" picker for every
+# repo in the org (GitHub's org workflow-template feature). It's an
+# optional convenience — the same check already runs automatically via
+# the org-required "workflows" ruleset rule, so adding this is not
+# required, just explicit.
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    uses: sas-technology/.github/.github/workflows/reusable-lint.yml@main

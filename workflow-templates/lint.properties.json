@@ -1,0 +1,6 @@
+{
+  "name": "SAS org lint gate",
+  "description": "Calls sas-technology/.github's reusable-lint.yml (markdownlint, yamllint, prettier, actionlint, JSON validity). Drop in unchanged.",
+  "iconName": "octicon check-circle",
+  "categories": ["Code Quality"]
+}

@@ -1,0 +1,58 @@
+---
+# Starter Dependabot config. Copy to `.github/dependabot.yml` in your
+# repo and delete the ecosystem blocks that don't apply. Dependabot
+# config is per-repo — it does not propagate from this `.github` repo.
+#
+# Org convention: weekly on Monday, one grouped PR per ecosystem
+# instead of one PR per package.
+#
+# Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # --- Node / TypeScript projects -------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      npm-dependencies:
+        patterns: ["*"]
+
+  # --- Python projects -------------------------------------------------
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      pip-dependencies:
+        patterns: ["*"]
+
+  # --- Swift projects ----------------------------------------------------
+  - package-ecosystem: "swift"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      swift-dependencies:
+        patterns: ["*"]
+
+  # --- GitHub Actions (every repo should keep this one) -----------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # --- Uncomment if the repo ships a Dockerfile -------------------------
+  # - package-ecosystem: "docker"
+  #   directory: "/"
+  #   schedule:
+  #     interval: "weekly"
+  #     day: "monday"

@@ -1,0 +1,44 @@
+# yamllint config for sas-technology/.github and, as a fallback, for any
+# sas-technology repo that doesn't ship its own.
+#
+# Relaxed defaults that accommodate GitHub Actions' `on:` key (a YAML 1.1
+# boolean) and long lines in workflow shell steps and issue-form `about:`
+# strings.
+# See https://yamllint.readthedocs.io/en/stable/configuration.html
+
+extends: default
+
+ignore: |
+  node_modules/
+  pnpm-lock.yaml
+  package-lock.json
+  yarn.lock
+  **/pnpm-lock.yaml
+  **/package-lock.json
+  **/yarn.lock
+
+rules:
+  line-length:
+    max: 140
+    level: error
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+
+  # GitHub Actions uses `on:` as a key, which YAML 1.1 treats as boolean.
+  truthy:
+    check-keys: false
+    level: error
+
+  document-start: disable
+
+  comments:
+    min-spaces-from-content: 1
+
+  comments-indentation: disable
+
+  indentation:
+    spaces: 2
+    indent-sequences: consistent
+
+  empty-lines:
+    max-end: 1

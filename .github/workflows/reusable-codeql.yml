@@ -1,0 +1,43 @@
+---
+# CodeQL static analysis. Opt-in — call it from a repo with:
+#
+#   jobs:
+#     codeql:
+#       uses: sas-technology/.github/.github/workflows/reusable-codeql.yml@main
+#       with:
+#         languages: '[{"language": "javascript-typescript"}, {"language": "python"}]'
+#
+# Supported language values (as of CodeQL's current support):
+# javascript-typescript, python, swift, java-kotlin, go, c-cpp, ruby,
+# csharp. Pick the ones that match the repo.
+name: Reusable - CodeQL
+
+on:
+  workflow_call:
+    inputs:
+      languages:
+        type: string
+        required: true
+        description: JSON array of {language, build-mode?} objects
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.lang.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: ${{ fromJSON(inputs.languages) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.lang.language }}
+          build-mode: ${{ matrix.lang.build-mode || 'autobuild' }}
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.lang.language }}"

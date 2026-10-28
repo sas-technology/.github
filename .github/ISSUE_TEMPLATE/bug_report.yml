@@ -1,0 +1,35 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: false
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "e.g. browser/OS version, or where this runs"
+    validations:
+      required: false
+  - type: checkboxes
+    id: data-check
+    attributes:
+      label: Confirm
+      options:
+        - label: This report does not contain any real student, staff, or family data
+          required: true
