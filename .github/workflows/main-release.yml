@@ -48,7 +48,7 @@ jobs:
       # Check out the default ref (main's tip), never the workflow_run's
       # head_sha: the next step runs a local action from this tree with
       # contents: write (Semgrep workflow-run-target-code-checkout).
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           fetch-depth: 0
           persist-credentials: false

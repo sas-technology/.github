@@ -29,4 +29,5 @@ permissions:
 
 jobs:
   lint:
+    # nosemgrep: github-actions-mutable-action-tag (first-party; pin to a SHA after the first release)
     uses: sas-technology/.github/.github/workflows/reusable-lint.yml@main

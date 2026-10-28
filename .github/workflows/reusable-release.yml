@@ -113,6 +113,7 @@ jobs:
         id: semver
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -123,12 +124,13 @@ jobs:
           if [[ "$TAG" =~ -(rc|alpha|beta) ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
-            echo "prerelease=${{ inputs.prerelease }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=$INPUT_PRERELEASE" >> "$GITHUB_OUTPUT"
           fi
 
   sbom:
     name: Generate SBOM
     needs: validate-tag
+    # nosemgrep: github-actions-mutable-action-tag (first-party; pin to a SHA after the first release)
     uses: sas-technology/.github/.github/workflows/reusable-sbom.yml@main
     permissions:
       contents: read
@@ -148,7 +150,7 @@ jobs:
     outputs:
       hashes: ${{ steps.checksums.outputs.hashes }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           fetch-depth: 0
           ref: ${{ needs.validate-tag.outputs.tag }}

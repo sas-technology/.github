@@ -138,7 +138,7 @@ jobs:
       tag: ${{ steps.v.outputs.tag }}
       created: ${{ steps.push.outputs.created }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           ref: ${{ inputs.ref || github.sha }}
           # No credential is kept: the version command runs after this. The
@@ -157,6 +157,7 @@ jobs:
 
       - name: Check it against the versioning policy, or compute it
         id: policy
+        # nosemgrep: github-actions-mutable-action-tag (first-party; pin to a SHA after the first release)
         uses: sas-technology/.github/.github/actions/next-version@main
         with:
           channel: ${{ inputs.channel }}
