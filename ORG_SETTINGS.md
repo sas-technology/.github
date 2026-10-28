@@ -23,10 +23,13 @@ For each JSON file in [`github-rulesets/`](./github-rulesets/):
 2. Upload the JSON file.
 3. Review it, then set **Enforcement status** to **Active**.
 
-| File                            | What it does                                                                                                                                                                                                                                                                |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `org-wide-main-protection.json` | On every repo's default branch: no deletion, no force-push, 1 required PR approval, PR review threads must be resolved, squash/rebase merges only, and the five `lint / *` checks + the org-required `org-lint.yml` workflow must pass before merge. Org admins can bypass. |
-| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases.                                                                                                                                                      |
+Or run `scripts/apply-org-rulesets.sh` (imports both files as
+_disabled_; add `--active` to enforce, `--dry-run` to preview).
+
+| File                            | What it does                                                                                                                                                                                                                                                                                         |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `org-wide-main-protection.json` | On every repo's default branch: no deletion, no force-push, PR required before merge (0 required approvals), PR review threads must be resolved, squash/rebase merges only, and the five `lint / *` checks + the org-required `org-lint.yml` workflow must pass before merge. Org admins can bypass. |
+| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases.                                                                                                                                                                               |
 
 **Before you import `org-wide-main-protection.json`**, note it
 hardcodes this repo's numeric ID (`1211111495`, i.e.
@@ -36,11 +39,9 @@ change if this repo is ever deleted and recreated.
 
 **Adjust before importing, if needed:**
 
-- `required_approving_review_count: 1` — raise it if you want more
-  than one reviewer org-wide. Consider adding any single-maintainer
-  repo (no second person available to review) to
-  `repository_name.exclude` below, or dropping this to `0`, so it
-  doesn't lock that repo's own owner out of merging.
+- `required_approving_review_count: 0` — most work here is built in
+  isolation, so no reviewer is required. Raise it per your needs; a
+  value above 0 locks out repos with no second reviewer.
 - `require_code_owner_review: false` — flip to `true` once most repos
   actually have a `.github/CODEOWNERS` (see §3). Turning it on before
   that just makes PRs unmergeable on repos with no owners defined.
