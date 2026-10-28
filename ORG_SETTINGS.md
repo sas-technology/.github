@@ -26,16 +26,29 @@ For each JSON file in [`github-rulesets/`](./github-rulesets/):
 Or run `scripts/apply-org-rulesets.sh` (imports both files as
 _disabled_; add `--active` to enforce, `--dry-run` to preview).
 
-| File                            | What it does                                                                                                                                                                                                                                                                                         |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `org-wide-main-protection.json` | On every repo's default branch: no deletion, no force-push, PR required before merge (0 required approvals), PR review threads must be resolved, squash/rebase merges only, and the five `lint / *` checks + the org-required `org-lint.yml` workflow must pass before merge. Org admins can bypass. |
-| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases.                                                                                                                                                                               |
+| File                            | What it does                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `org-wide-main-protection.json` | On every repo's default branch **and `staging`**: no deletion, no force-push, linear history, PR required (0 approvals), review threads resolved, squash/rebase only, **squash merge queue**, the five `lint / *` checks up to date, and the org-required workflows `org-lint.yml`, `release-version-check.yml` and `repo-standards.yml`. Org admins can bypass. |
+| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases.                                                                                                                                                                                                                                           |
 
-**Before you import `org-wide-main-protection.json`**, note it
-hardcodes this repo's numeric ID (`1211111495`, i.e.
-`sas-technology/.github`) in the `workflows` rule so the required
-`org-lint.yml` workflow resolves correctly. That ID only needs to
-change if this repo is ever deleted and recreated.
+**Merge the PR that adds the required workflows first.** The
+`workflows` rule names three files on this repo's `main`
+(`org-lint.yml`, `release-version-check.yml`, `repo-standards.yml`);
+importing the ruleset before they exist fails. It hardcodes this
+repo's numeric ID (`1211111495`) for that rule, which only changes if
+this repo is deleted and recreated.
+
+**Merge queue.** The ruleset puts every repo on a squash merge queue
+(batch size 1, so a major release merges alone). A queued PR runs its
+required checks on the `merge_group` event; a repo whose own required
+checks (for example `digital-toolkit`'s `TypeScript`) don't trigger on
+`merge_group` will stall queued PRs until that workflow adds the
+trigger. `repo-standards.yml` warns about exactly this.
+
+**Staging.** Every repo has a `staging` branch. A merge into `staging`
+is tagged as the next patch (`staging-version.yml`), a release from
+`staging` to `main` as the next minor, and a major only by hand
+(`release-version-check.yml` enforces this on PRs into both branches).
 
 **Adjust before importing, if needed:**
 
