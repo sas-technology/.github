@@ -4,7 +4,8 @@
 #   1. Org rulesets   (runs scripts/apply-org-rulesets.sh)
 #   2. Security       (Dependabot alerts/updates, secret scanning + push protection,
 #                      applied to all repos and set as the default for new repos)
-#   3. Repo defaults  (squash/rebase only, auto-delete branches, auto-merge, update-branch)
+#   3. Merge queue    (repo-level ruleset on every repo; org rulesets cannot hold merge_queue)
+#      Repo defaults  (squash/rebase only, auto-delete branches, auto-merge, update-branch)
 #   4. Verify         (per repo: staging branch + the rules that apply to main and staging)
 #
 # Usage:
@@ -99,6 +100,31 @@ step_security() {
   echo "  configuration #$id attached to all repos and set as default for new repos"
 }
 
+step_queue() {
+  echo "== 3a. Merge queue (repo-level ruleset on every repo)"
+  local file="github-rulesets/repo/merge-queue.json" repo name payload id
+  name=$(jq -r .name "$file")
+  payload=$(jq --arg e "$([ "$ACTIVE" -eq 1 ] && echo active || echo disabled)" '.enforcement=$e' "$file")
+  local private
+  for repo in $(gh api --paginate "/orgs/$ORG/repos" --jq '.[] | select(.archived|not) | .name'); do
+    private=$(gh api "/repos/$ORG/$repo" --jq .private)
+    id=$(gh api "/repos/$ORG/$repo/rulesets" --jq ".[] | select(.name==\"$name\") | .id" 2>/dev/null | head -n1)
+    if [ "$DRY" -eq 1 ]; then
+      echo "  [dry-run] ${id:+update}${id:-create} '$name' on $repo"
+    elif [ -n "$id" ]; then
+      gh api -X PUT "/repos/$ORG/$repo/rulesets/$id" --input - <<<"$payload" >/dev/null 2>&1 && echo "  updated $repo" || fail "merge queue: could not update $repo"
+    else
+      if gh api -X POST "/repos/$ORG/$repo/rulesets" --input - <<<"$payload" >/dev/null 2>&1; then
+        echo "  created $repo"
+      elif [ "$private" = "true" ]; then
+        echo "  skipped $repo (private: merge queue needs GitHub Enterprise Cloud)"
+      else
+        fail "merge queue: could not create on $repo"
+      fi
+    fi
+  done
+}
+
 step_repos() {
   echo "== 3. Repo merge settings"
   local payload='{"allow_merge_commit":false,"allow_squash_merge":true,"allow_rebase_merge":true,"delete_branch_on_merge":true,"allow_auto_merge":true,"allow_update_branch":true,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}'
@@ -134,6 +160,7 @@ ensure_scope
 if [ "$VERIFY_ONLY" -eq 0 ]; then
   [ "$DO_RULESETS" -eq 1 ] && step_rulesets
   [ "$DO_SECURITY" -eq 1 ] && step_security
+  [ "$DO_RULESETS" -eq 1 ] && step_queue
   [ "$DO_REPOS" -eq 1 ] && step_repos
 fi
 step_verify
