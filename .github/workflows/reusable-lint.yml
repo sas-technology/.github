@@ -13,6 +13,12 @@
 # required-status-check contexts in that ruleset — renaming a job here
 # means updating the ruleset too.
 #
+# SCOPE: by default only the files a change touches are checked (a PR's
+# diff against its base, a merge-queue group's diff, or a push's diff),
+# so adopting the org lint does not require cleaning a repo's existing
+# files first. Pass `scope: all` to check every file. With no base to
+# diff against (a manual run, a new branch) it checks every file.
+#
 # If the calling repo doesn't have its own .markdownlint.jsonc,
 # .yamllint.yaml, .prettierrc, or .prettierignore, this falls back to
 # the copies in this repo instead of failing on absent config.
@@ -20,6 +26,11 @@ name: lint
 
 on:
   workflow_call:
+    inputs:
+      scope:
+        description: '"changed" (default) checks only files the change touches; "all" checks everything'
+        type: string
+        default: changed
 
 permissions:
   contents: read
@@ -30,25 +41,73 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
-      - uses: reviewdog/action-actionlint@cfa6a621f27735ccc88d35af9d0608692fd9b9f7  # v1
+        with:
+          fetch-depth: 0
+      - name: Find changed files
+        id: changed
+        env:
+          SCOPE: ${{ inputs.scope }}
+          BASE: >-
+            ${{ github.event.pull_request.base.sha
+            || github.event.merge_group.base_sha
+            || (github.event_name == 'push' && github.event.before)
+            || '' }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/changed.txt"
+          zero=0000000000000000000000000000000000000000
+          if [ "$SCOPE" = "changed" ] && [ -n "$BASE" ] && [ "$BASE" != "$zero" ] \
+            && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            git diff --name-only -z --diff-filter=ACMRT "$BASE" HEAD > "$out"
+            echo "Checking files changed since $BASE."
+          else
+            git ls-files -z > "$out"
+            echo "Checking every file."
+          fi
+          files=$({ grep -z -E '^\.github/workflows/[^/]+\.ya?ml$' "$out" || true; } | tr '\0' ' ' | sed 's/ *$//')
+          echo "workflows=$files" >> "$GITHUB_OUTPUT"
+          [ -n "$files" ] || echo "No workflow files to check."
+      - if: steps.changed.outputs.workflows != ''
+        uses: reviewdog/action-actionlint@cfa6a621f27735ccc88d35af9d0608692fd9b9f7  # v1
         with:
           fail_level: error
+          actionlint_flags: ${{ steps.changed.outputs.workflows }}
 
   json-validity:
     name: JSON validity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
-      - name: Validate every tracked JSON file
+        with:
+          fetch-depth: 0
+      - name: Validate JSON files
+        env:
+          SCOPE: ${{ inputs.scope }}
+          BASE: >-
+            ${{ github.event.pull_request.base.sha
+            || github.event.merge_group.base_sha
+            || (github.event_name == 'push' && github.event.before)
+            || '' }}
         run: |
           set -euo pipefail
+          out="$RUNNER_TEMP/changed.txt"
+          zero=0000000000000000000000000000000000000000
+          if [ "$SCOPE" = "changed" ] && [ -n "$BASE" ] && [ "$BASE" != "$zero" ] \
+            && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            git diff --name-only -z --diff-filter=ACMRT "$BASE" HEAD > "$out"
+          else
+            git ls-files -z > "$out"
+          fi
           status=0
           while IFS= read -r -d '' file; do
+            case "$file" in
+              */node_modules/* | node_modules/* | *-lock.json) continue ;;
+            esac
             if ! python3 -m json.tool "$file" >/dev/null; then
               echo "::error file=$file::Invalid JSON"
               status=1
             fi
-          done < <(git ls-files -z -- '*.json' ':!:**/node_modules/**' ':!:**/*-lock.json')
+          done < <({ grep -z -E '\.json$' "$out" || true; })
           exit "$status"
 
   prettier:
@@ -56,6 +115,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          fetch-depth: 0
+      - name: Find changed files
+        env:
+          SCOPE: ${{ inputs.scope }}
+          BASE: >-
+            ${{ github.event.pull_request.base.sha
+            || github.event.merge_group.base_sha
+            || (github.event_name == 'push' && github.event.before)
+            || '' }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/changed.txt"
+          zero=0000000000000000000000000000000000000000
+          if [ "$SCOPE" = "changed" ] && [ -n "$BASE" ] && [ "$BASE" != "$zero" ] \
+            && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            git diff --name-only -z --diff-filter=ACMRT "$BASE" HEAD > "$out"
+          else
+            git ls-files -z > "$out"
+          fi
       - name: Fetch org default config (used only if this repo has none)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
@@ -69,13 +148,46 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7
         with:
           node-version: 20
-      - run: npx --yes prettier@3 --check .
+      - name: Check formatting
+        run: |
+          set -euo pipefail
+          files="$RUNNER_TEMP/prettier-files.txt"
+          { grep -z -v -E '(^|/)(node_modules|\.git|\.org-defaults)/' "$RUNNER_TEMP/changed.txt" || true; } > "$files"
+          if [ ! -s "$files" ]; then echo "No changed files to check."; exit 0; fi
+          xargs -0 npx --yes prettier@3 --check --ignore-unknown < "$files"
 
   markdownlint:
     name: markdownlint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          fetch-depth: 0
+      - name: Find changed Markdown files
+        id: changed
+        env:
+          SCOPE: ${{ inputs.scope }}
+          BASE: >-
+            ${{ github.event.pull_request.base.sha
+            || github.event.merge_group.base_sha
+            || (github.event_name == 'push' && github.event.before)
+            || '' }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/changed.txt"
+          zero=0000000000000000000000000000000000000000
+          if [ "$SCOPE" = "changed" ] && [ -n "$BASE" ] && [ "$BASE" != "$zero" ] \
+            && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            git diff --name-only -z --diff-filter=ACMRT "$BASE" HEAD > "$out"
+          else
+            git ls-files -z > "$out"
+          fi
+          delim="EOF_$RANDOM$RANDOM"
+          {
+            echo "md<<$delim"
+            { grep -z -E '\.(md|markdown)$' "$out" || true; } | { grep -z -v -E '(^|/)node_modules/' || true; } | tr '\0' '\n'
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
       - name: Fetch org default config (used only if this repo has none)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
@@ -85,15 +197,37 @@ jobs:
         run: |
           cp -n .org-defaults/.markdownlint.jsonc . 2>/dev/null || true
           rm -rf .org-defaults
-      - uses: DavidAnson/markdownlint-cli2-action@696eb3f2509270d7b882d2aa68347bc676e7af34  # v25
+      - name: Lint Markdown
+        if: steps.changed.outputs.md != ''
+        uses: DavidAnson/markdownlint-cli2-action@696eb3f2509270d7b882d2aa68347bc676e7af34  # v25
         with:
-          globs: "**/*.md"
+          globs: ${{ steps.changed.outputs.md }}
 
   yamllint:
     name: yamllint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          fetch-depth: 0
+      - name: Find changed files
+        env:
+          SCOPE: ${{ inputs.scope }}
+          BASE: >-
+            ${{ github.event.pull_request.base.sha
+            || github.event.merge_group.base_sha
+            || (github.event_name == 'push' && github.event.before)
+            || '' }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/changed.txt"
+          zero=0000000000000000000000000000000000000000
+          if [ "$SCOPE" = "changed" ] && [ -n "$BASE" ] && [ "$BASE" != "$zero" ] \
+            && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            git diff --name-only -z --diff-filter=ACMRT "$BASE" HEAD > "$out"
+          else
+            git ls-files -z > "$out"
+          fi
       - name: Fetch org default config (used only if this repo has none)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
@@ -107,4 +241,11 @@ jobs:
         with:
           python-version: "3.x"
       - run: pip install yamllint
-      - run: yamllint -c .yamllint.yaml .
+      - name: Lint YAML
+        run: |
+          set -euo pipefail
+          files="$RUNNER_TEMP/yaml-files.txt"
+          { grep -z -E '\.ya?ml$' "$RUNNER_TEMP/changed.txt" || true; } \
+            | { grep -z -v -E '(^|/)(node_modules|\.org-defaults)/' || true; } > "$files"
+          if [ ! -s "$files" ]; then echo "No changed YAML files to check."; exit 0; fi
+          xargs -0 yamllint -c .yamllint.yaml < "$files"
