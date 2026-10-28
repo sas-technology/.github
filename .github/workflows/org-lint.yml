@@ -1,0 +1,22 @@
+---
+# Org-required lint check. This is the workflow referenced by the
+# "workflows" rule in github-rulesets/org-wide-main-protection.json
+# (GitHub's "required workflows" ruleset feature) — once that ruleset
+# is imported, GitHub runs THIS file on every pull request in every
+# repo in the org, without that repo needing a lint.yml of its own.
+#
+# It simply calls the reusable lint workflow. Uses the local-path form
+# (./.github/workflows/...) rather than an owner/repo@ref pin so it
+# always resolves against the ref this file itself is running from.
+
+name: Org lint gate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    uses: ./.github/workflows/reusable-lint.yml

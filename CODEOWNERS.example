@@ -1,0 +1,26 @@
+# Starter CODEOWNERS template.
+#
+# Copy this file to `.github/CODEOWNERS` in your repository and edit
+# the teams/usernames for your project. CODEOWNERS is per-repo — it
+# does NOT propagate from this `.github` repo automatically.
+#
+# Replace the placeholder teams below with real GitHub teams under the
+# sas-technology org (an org owner needs to create them first — see
+# this repo's PR description / ORG_SETTINGS.md for the list this repo
+# assumes exists).
+#
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for anything not matched below.
+* @sas-technology/maintainers
+
+# CI/CD and workflow changes should get an extra set of eyes.
+/.github/ @sas-technology/maintainers
+
+# Call out anything security- or data-sensitive explicitly.
+/src/auth/ @sas-technology/security
+/src/**/student-data/ @sas-technology/security
+
+# Docs can usually be reviewed by a wider group.
+*.md @sas-technology/maintainers
+/docs/ @sas-technology/maintainers

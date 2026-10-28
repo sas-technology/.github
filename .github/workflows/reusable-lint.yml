@@ -1,0 +1,110 @@
+---
+# Reusable org-wide lint gate. Any repo calls it with:
+#
+#   jobs:
+#     lint:
+#       uses: sas-technology/.github/.github/workflows/reusable-lint.yml@main
+#
+# It is also required org-wide, without any repo needing to add a
+# caller, via the "workflows" rule in
+# github-rulesets/org-wide-main-protection.json (GitHub's "required
+# workflows" ruleset feature), which points at ./org-lint.yml in this
+# repo. The five job names below ("lint / <job>") are the exact
+# required-status-check contexts in that ruleset — renaming a job here
+# means updating the ruleset too.
+#
+# If the calling repo doesn't have its own .markdownlint.jsonc,
+# .yamllint.yaml, .prettierrc, or .prettierignore, this falls back to
+# the copies in this repo instead of failing on absent config.
+name: lint
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: reviewdog/action-actionlint@v1
+        with:
+          fail_level: error
+
+  json-validity:
+    name: JSON validity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate every tracked JSON file
+        run: |
+          set -euo pipefail
+          status=0
+          while IFS= read -r -d '' file; do
+            if ! python3 -m json.tool "$file" >/dev/null; then
+              echo "::error file=$file::Invalid JSON"
+              status=1
+            fi
+          done < <(git ls-files -z -- '*.json' ':!:**/node_modules/**' ':!:**/*-lock.json')
+          exit "$status"
+
+  prettier:
+    name: prettier
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fetch org default config (used only if this repo has none)
+        uses: actions/checkout@v5
+        with:
+          repository: sas-technology/.github
+          path: .org-defaults
+      - name: Seed missing config from org defaults
+        run: |
+          cp -n .org-defaults/.prettierrc . 2>/dev/null || true
+          cp -n .org-defaults/.prettierignore . 2>/dev/null || true
+          rm -rf .org-defaults
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - run: npx --yes prettier@3 --check .
+
+  markdownlint:
+    name: markdownlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fetch org default config (used only if this repo has none)
+        uses: actions/checkout@v5
+        with:
+          repository: sas-technology/.github
+          path: .org-defaults
+      - name: Seed missing config from org defaults
+        run: |
+          cp -n .org-defaults/.markdownlint.jsonc . 2>/dev/null || true
+          rm -rf .org-defaults
+      - uses: DavidAnson/markdownlint-cli2-action@v19
+        with:
+          globs: "**/*.md"
+
+  yamllint:
+    name: yamllint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fetch org default config (used only if this repo has none)
+        uses: actions/checkout@v5
+        with:
+          repository: sas-technology/.github
+          path: .org-defaults
+      - name: Seed missing config from org defaults
+        run: |
+          cp -n .org-defaults/.yamllint.yaml . 2>/dev/null || true
+          rm -rf .org-defaults
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - run: pip install yamllint
+      - run: yamllint -c .yamllint.yaml .

@@ -1,0 +1,27 @@
+// markdownlint-cli2 config for sas-technology/.github, and the fallback
+// used by the org lint gate for repos that don't ship their own.
+//
+// See https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+{
+  "default": true,
+
+  // Line length — wrap for readability, not at a fixed column.
+  "MD013": false,
+
+  // Inline HTML — the org profile README uses <div align="center">.
+  "MD033": false,
+
+  // First line must be a top-level heading — not always true for docs
+  // that open with a badge or an HTML comment.
+  "MD041": false,
+
+  // Fenced code blocks without a language tag — acceptable for plain
+  // output blocks.
+  "MD040": false,
+
+  // Duplicate headings are fine as long as they aren't siblings.
+  "MD024": { "siblings_only": true },
+
+  // Unordered list indentation — 2 spaces.
+  "MD007": { "indent": 2 },
+}
