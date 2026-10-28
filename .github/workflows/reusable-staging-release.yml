@@ -1,0 +1,238 @@
+# Reusable workflow: release a merge into `staging` as the next PATCH.
+#
+# The org versioning policy:
+#
+#   Merge into `staging`       PATCH  x.y.z -> x.y.(z+1)   this workflow
+#   Release `staging` -> main  MINOR  x.y.z -> x.(y+1).0   the repo's main release
+#   MAJOR                      by hand: workflow_dispatch with bump: major
+#
+# Each segment holds 0..999: patch 999 rolls into the next minor; minor 999
+# is refused. The rules live in ONE place, the next-version action in this
+# repo, which this workflow and every release flow pin by SHA.
+#
+# The version lives in TAGS, not in a commit: each staging merge gets an
+# annotated tag `v<next patch>` on the merged commit. Nothing is committed
+# back to `staging`, so nothing loops and branch protection is untouched.
+# The repo's main release computes its MINOR from the same tags, so beta and
+# production versions are one sequence: v0.27.1, v0.27.2 (beta) ... v0.28.0.
+#
+# The tag is pushed with GITHUB_TOKEN ON PURPOSE: GitHub starts no workflow
+# from it, so a repo's `push: tags` publish workflow (npm, crates, store)
+# does not ship a beta build as a production release. The beta deploy runs
+# on the `staging` push itself. The caller grants `contents: write`; no PAT
+# is used or accepted.
+#
+# Usage, in the repo's staging workflow:
+#
+#   on:
+#     push:
+#       branches: [staging]
+#     workflow_dispatch:
+#       inputs:
+#         bump:
+#           description: Override the bump (major is only ever manual).
+#           type: choice
+#           options: [patch, minor, major]
+#           default: patch
+#   permissions:
+#     contents: read
+#   jobs:
+#     version:
+#       uses: sas-technology/.github/.github/workflows/reusable-staging-release.yml@main
+#       with:
+#         bump: ${{ inputs.bump || '' }}
+#       permissions:
+#         contents: write
+#
+# Inputs
+# ------
+# bump            Override the patch: minor or major ('' on push runs). A
+#                 major is accepted only when a person started the run.
+# tag-prefix      Prefix of version tags (default: v).
+# current         The version to bump from. Empty (default) = the highest
+#                 version tag. Set it when the repo carries a stray tag above
+#                 its real line (a legacy v4.0.1 above v0.27.0, say) that
+#                 cannot be deleted under the tag ruleset.
+# ref             Commit to tag (default: the commit that started the run).
+#                 It must be on `staging`: the branch name, or a commit that
+#                 `staging` contains.
+# create-release  Also create a GitHub pre-release with generated notes, so
+#                 the beta build is visible without marking it latest
+#                 (default: true).
+#
+# Outputs
+# -------
+# version, tag    The patch version and its tag.
+# previous        The highest version before this one.
+# created         'true' when this run created the tag ('false' when the
+#                 commit already carried a version tag, e.g. a re-run).
+#
+# Guard
+# -----
+# The run fails before computing anything unless it tags staging (or is a
+# main release, below), so a "Run workflow" click left on the default branch
+# (main) cannot tag a main commit as a beta patch. Allowed:
+#   - no `ref`, and the run started on refs/heads/staging;
+#   - `ref` set, and the commit it names is on `staging`;
+#   - no `ref`, the run started on refs/heads/main, `bump` is minor or
+#     major, and `create-release` is false: a main release, which publishes
+#     its own latest release (see main-release.yml).
+#     A staging-version.yml run left on main never qualifies: it keeps
+#     create-release at its default, true.
+# test-actions.yml runs this guard's script.
+
+name: Reusable / Staging release
+
+on:
+  workflow_call:
+    inputs:
+      bump:
+        description: "Override: minor or major. Empty = patch."
+        type: string
+        default: ""
+      tag-prefix:
+        description: Prefix for the tag name.
+        type: string
+        default: v
+      current:
+        description: Version to bump from. Empty = the highest version tag.
+        type: string
+        default: ""
+      ref:
+        description: Commit to tag. Defaults to the commit that started the run.
+        type: string
+        default: ""
+      create-release:
+        description: Also create a GitHub pre-release with generated notes.
+        type: boolean
+        default: true
+    outputs:
+      version:
+        description: The version this run released.
+        value: ${{ jobs.tag.outputs.version }}
+      tag:
+        description: The tag name.
+        value: ${{ jobs.tag.outputs.tag }}
+      previous:
+        description: The highest version before this one.
+        value: ${{ jobs.tag.outputs.previous }}
+      created:
+        description: "'true' when this run created the tag."
+        value: ${{ jobs.tag.outputs.created }}
+
+# No `permissions:` block: the job runs with what the caller grants
+# (contents: write, to push the tag and create the pre-release).
+
+jobs:
+  tag:
+    name: Tag the next patch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One at a time, so two quick merges cannot compute the same version.
+    concurrency:
+      group: version-tag-${{ github.repository }}
+      cancel-in-progress: false
+    outputs:
+      version: ${{ steps.push.outputs.version }}
+      tag: ${{ steps.push.outputs.tag }}
+      previous: ${{ steps.v.outputs.current }}
+      created: ${{ steps.push.outputs.created }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          # An explicit ref is checked against staging's history, so fetch it.
+          fetch-depth: ${{ inputs.ref != '' && '0' || '1' }}
+          persist-credentials: false
+
+      # Keep this step's script self-contained: test-actions.yml extracts it
+      # by id and runs it against a staging and a main ref.
+      - name: Refuse anything but staging
+        id: guard
+        env:
+          RUN_REF: ${{ github.ref }}
+          INPUT_REF: ${{ inputs.ref }}
+          BUMP: ${{ inputs.bump }}
+          CREATE_RELEASE: ${{ inputs.create-release }}
+        run: |
+          set -euo pipefail
+          if [ -z "$INPUT_REF" ]; then
+            # A main release: a minor (or a manual major) on main, from a caller
+            # that publishes the release itself (create-release: false).
+            if [ "$RUN_REF" = "refs/heads/main" ] && [ "$CREATE_RELEASE" = "false" ] \
+              && { [ "$BUMP" = minor ] || [ "$BUMP" = major ]; }; then
+              echo "Run started on main with bump: ${BUMP}; tagging the main release at $(git rev-parse HEAD)."
+              exit 0
+            fi
+            if [ "$RUN_REF" != "refs/heads/staging" ]; then
+              msg="This run started on ${RUN_REF:-an unknown ref}, not refs/heads/staging."
+              msg+=" Staging releases tag staging commits only. Re-run it on the staging branch"
+              msg+=" (Run workflow > Use workflow from: staging), or pass ref: with a commit on staging."
+              echo "::error::$msg"
+              exit 1
+            fi
+            echo "Run started on staging; tagging $(git rev-parse HEAD)."
+            exit 0
+          fi
+          head="$(git rev-parse HEAD)"
+          if ! git rev-parse --verify --quiet refs/remotes/origin/staging >/dev/null; then
+            echo "::error::ref: ${INPUT_REF} was passed, but this repo has no staging branch to check it against."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$head" refs/remotes/origin/staging; then
+            echo "::error::ref: ${INPUT_REF} resolves to ${head}, which is not on staging. Staging releases tag staging commits only."
+            exit 1
+          fi
+          echo "ref: ${INPUT_REF} resolves to ${head}, on staging; tagging it."
+
+      - name: Compute the next version
+        id: v
+        # nosemgrep: github-actions-mutable-action-tag (first-party; pin to a SHA after the first release)
+        uses: sas-technology/.github/.github/actions/next-version@main
+        with:
+          channel: staging
+          bump: ${{ inputs.bump }}
+          manual: ${{ github.event_name == 'workflow_dispatch' }}
+          tag-prefix: ${{ inputs.tag-prefix }}
+          current: ${{ inputs.current }}
+
+      - name: Push the tag and pre-release
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PREFIX: ${{ inputs.tag-prefix }}
+          TAG: ${{ steps.v.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
+          CREATE_RELEASE: ${{ inputs.create-release }}
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git"
+          head="$(git rev-parse HEAD)"
+          # A re-run, or a commit that already has a version: tag nothing.
+          # Annotated tags list their commit on the peeled `^{}` line.
+          existing="$(git ls-remote --tags "$remote" "refs/tags/${PREFIX}*" \
+            | awk -v h="$head" '$1 == h && $2 ~ /\^\{\}$/ { sub(/^refs\/tags\//, "", $2); sub(/\^\{\}$/, "", $2); print $2; exit }')"
+          if [ -n "$existing" ]; then
+            echo "$head already carries $existing; nothing to tag."
+            {
+              echo "created=false"
+              echo "tag=$existing"
+              echo "version=${existing#"$PREFIX"}"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG (staging)"
+          git push "$remote" "refs/tags/$TAG"
+          {
+            echo "created=true"
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+          } >> "$GITHUB_OUTPUT"
+          echo "Pushed $TAG at $head." | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$CREATE_RELEASE" = "true" ]; then
+            gh release create "$TAG" --verify-tag --prerelease --latest=false \
+              --title "$TAG (beta)" --generate-notes
+          fi

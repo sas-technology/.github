@@ -1,0 +1,187 @@
+# Composite action: the org's versioning policy.
+#
+#   Merge into `staging`       PATCH  x.y.z -> x.y.(z+1)
+#   Release `staging` -> main  MINOR  x.y.z -> x.(y+1).0
+#   MAJOR                      manual only: workflow_dispatch with bump: major
+#
+# Each segment holds 0..999. Patch 999 rolls into the next minor; minor 999
+# is refused, with a message asking for a manual major. The rules live in
+# next-version.mjs beside this file, with its tests.
+#
+# Two modes, both decided by next-version.mjs `decide` (the same decision
+# release-version-check makes; this action only fetches tags and writes
+# outputs):
+#
+#   next   (no `proposed`)  When `current-from-files` holds a version above
+#                           every version tag (none, or an untagged repo,
+#                           counts as below), that version itself: the
+#                           release the files announce (the PR check, or an
+#                           owner bypass, already let it in). A manual run
+#                           with an explicit `bump` overrides that and bumps
+#                           from max(tag, files). Otherwise the next version
+#                           after the highest tag for `channel`.
+#   check  (`proposed` set) The version is written in the repo (package.json,
+#                           Cargo.toml, ...). The step fails unless it is
+#                           the current, tagged version or the one the policy
+#                           allows next; a downgrade to an old tag fails.
+#
+# In check mode the current version is the higher of the highest version tag
+# (a tag named exactly <prefix><strict version>; v2024.10.1 is out of range
+# and ignored) and `current-from-files`, the version the files held before
+# the change, so files ahead of the tags never deadlock a repo. With the
+# default prefix, a repo with tags but no version tag cannot be verified:
+# check fails, next gives the files' version or 0.0.1. With any other
+# prefix (a monorepo component), every tag but its own version tags is
+# ignored, and only those are fetched. `manual` is a manual run only when it
+# is exactly "true". A proposed version must be strict (MAJOR.MINOR.PATCH,
+# each 0..999).
+#
+# Usage, pinned to a commit like every org action:
+#
+#   - id: v
+#     uses: sas-technology/.github/.github/actions/next-version@main
+#     with:
+#       channel: main
+#       bump: ${{ inputs.bump }}                 # '' on automatic runs
+#       manual: ${{ github.event_name == 'workflow_dispatch' }}
+#   - run: echo "${{ steps.v.outputs.version }}"
+#
+# Reads tags through the API with `token` (default: the run's GITHUB_TOKEN,
+# which needs only contents: read). Needs no checkout and writes nothing.
+
+name: Next version
+description: Compute or check the next version under the org versioning policy.
+
+inputs:
+  channel:
+    description: "'staging' (patch) or 'main' (minor)."
+    required: true
+  bump:
+    description: "Override: patch, minor or major. Empty takes the channel's default."
+    required: false
+    default: ""
+  manual:
+    description: "'true' when a person started the run. Required for a major."
+    required: false
+    default: "false"
+  proposed:
+    description: Version written in the repo. Set it to check instead of compute.
+    required: false
+    default: ""
+  current:
+    description: Highest released version. Empty reads it from the repo's tags.
+    required: false
+    default: ""
+  current-from-files:
+    description: >-
+      The version the files held BEFORE this change (check mode: never the
+      proposed version; that is refused). Leave empty if unknown. The
+      current version is the higher of it and the highest version tag.
+    required: false
+    default: ""
+  tag-prefix:
+    description: Prefix of the version tags.
+    required: false
+    default: v
+  repository:
+    description: owner/repo whose tags are read.
+    required: false
+    default: ${{ github.repository }}
+  token:
+    description: Token that can read the repo's tags.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  current:
+    description: Highest released version before this one (0.0.0 if none).
+    value: ${{ steps.run.outputs.current }}
+  version:
+    description: The next version (next mode) or the checked version (check mode).
+    value: ${{ steps.run.outputs.version }}
+  tag:
+    description: tag-prefix + version.
+    value: ${{ steps.run.outputs.tag }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        CHANNEL: ${{ inputs.channel }}
+        BUMP: ${{ inputs.bump }}
+        MANUAL: ${{ inputs.manual }}
+        PROPOSED: ${{ inputs.proposed }}
+        CURRENT: ${{ inputs.current }}
+        FROM_FILES: ${{ inputs.current-from-files }}
+        PREFIX: ${{ inputs.tag-prefix }}
+        REPO: ${{ inputs.repository }}
+        GH_TOKEN: ${{ inputs.token }}
+        SCRIPT: ${{ github.action_path }}/next-version.mjs
+      run: |
+        set -euo pipefail
+        die() { echo "::error::$1"; exit 1; }
+        nv="$SCRIPT"
+        # strict <version>: a strict version echoes itself; anything else
+        # (or no answer) is not one. The same in both actions.
+        strict() {
+          local out
+          out="$(node "$nv" strict --version "$1" 2>/dev/null)" || return 1
+          [ "$out" = "$1" ]
+        }
+
+        # Every decision is next-version.mjs `decide`, the one
+        # release-version-check makes too; this script only fetches tags and
+        # writes outputs. Tags: ALL of the repo's (not prefix-filtered), or
+        # the given `current` as if it were the only tag.
+        if [ -n "$CURRENT" ]; then
+          strict "$CURRENT" || die "The current version is not MAJOR.MINOR.PATCH (each 0..999)."
+          refs="refs/tags/$PREFIX$CURRENT"
+        else
+          # The tags decide needs: every tag for the default prefix, else the
+          # prefix's own (next-version.mjs tags-path). The same in both actions.
+          if ! tag_path="$(node "$nv" tags-path --repo "$REPO" -- "$PREFIX")" \
+            || [[ "$tag_path" != "repos/$REPO/git/matching-refs/tags"* ]]; then
+            die "next-version tags-path gave no path."
+          fi
+          refs="$(gh api --paginate "$tag_path" --jq '.[].ref')" \
+            || die "Could not read the repo's tags; re-run the workflow."
+        fi
+        # --manual takes exactly true or false.
+        manual=false
+        if [ "$MANUAL" = "true" ]; then manual=true; fi
+        args=(--channel "$CHANNEL" --bump "$BUMP" --manual "$manual")
+        mode=compute
+        if [ -n "$PROPOSED" ]; then
+          mode=check
+          args+=(--proposed "$PROPOSED")
+        fi
+        args+=(--mode "$mode")
+        if [ -n "$FROM_FILES" ]; then args+=(--from-files "$FROM_FILES"); fi
+
+        # Only stdout is the answer; stderr (the reason, or a crash) goes to
+        # the log.
+        err="$RUNNER_TEMP/next-version-err"
+        # The prefix after --, so one starting with - is never a flag.
+        if ! out="$(printf '%s\n' "$refs" | node "$nv" decide "${args[@]}" -- "$PREFIX" 2> "$err")"; then
+          sed 1d "$err" >&2  # the first line is the reason, reported by die
+          reason="$(head -n 1 "$err")"
+          reason="${reason#::error::}"
+          reason="${reason#policy: }"
+          die "${reason:-next-version decide refused without a reason.}"
+        fi
+        if [ -s "$err" ]; then cat "$err" >&2; fi
+        echo "decide $mode: $out"
+        ok_re='^ok ([^ ]+) ([^ ]+) (.+)$'
+        [[ "$out" =~ $ok_re ]] || die "next-version decide gave no answer."
+        version="${BASH_REMATCH[1]}" current="${BASH_REMATCH[2]}" why="${BASH_REMATCH[3]}"
+        if ! strict "$version" || ! strict "$current"; then
+          die "next-version decide gave a bad version."
+        fi
+        echo "Version $current -> $version on $CHANNEL${BUMP:+ (bump: $BUMP)}: $why."
+        {
+          echo "current=$current"
+          echo "version=$version"
+          echo "tag=$PREFIX$version"
+        } >> "$GITHUB_OUTPUT"

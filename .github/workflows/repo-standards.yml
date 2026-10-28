@@ -1,0 +1,75 @@
+# Repo standards: the org rules every repository follows, checked on
+# every pull request.
+#
+#   WARN  The repo has no AGENTS.md at its root (the agent guide every repo
+#         carries; see sas-technology/.github/AGENTS.md).
+#   WARN  A workflow that runs on pull_request but not on merge_group. If it
+#         is (or becomes) a required check, a queued PR waits until the merge
+#         queue times it out. PR-only jobs can skip themselves with
+#         `if: github.event_name != 'merge_group'`; a skipped job passes.
+#
+# Both checks are warnings so that turning this on does not redden every
+# repo at once; promote them to failures once the backlog is cleared.
+#
+# HOW IT IS ENFORCED
+#
+# Name this file in the org ruleset's "Require workflows to pass" rule,
+# next to release-version-check.yml (repository sas-technology/.github, ref
+# refs/heads/main, targets ~DEFAULT_BRANCH and staging). A ruleset-run
+# workflow ignores the `on:` filters, so the job checks the event itself.
+# It never checks out or runs the PR's code: it reads files through the API.
+
+name: Repo standards
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the repo standards
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request|merge_group) ;;
+            *) echo "::error title=Repo standards::unexpected event '$EVENT'"; exit 1 ;;
+          esac
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error title=Repo standards::no head commit"; exit 1; }
+          summary() { printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; }
+          summary "### Repo standards"
+
+          # WARN: no AGENTS.md at the root.
+          if ! gh api "repos/$REPO/contents/AGENTS.md?ref=$HEAD_SHA" --silent 2>/dev/null; then
+            echo "::warning title=Repo standards::No AGENTS.md at the repo root. Every repo carries one (see the org AGENTS.md)."
+            summary "- ⚠️ no AGENTS.md at the root"
+          fi
+
+          # WARN: pull_request workflows without merge_group.
+          files=$(gh api "repos/$REPO/contents/.github/workflows?ref=$HEAD_SHA" \
+            --jq '.[] | select(.name | test("\\.ya?ml$")) | .path' 2>/dev/null || true)
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            body=$(gh api "repos/$REPO/contents/$f?ref=$HEAD_SHA" -H "Accept: application/vnd.github.raw" 2>/dev/null || true)
+            if grep -Eq '^[[:space:]]*pull_request[:[:space:]]|^on:.*pull_request|^[[:space:]]*-[[:space:]]*pull_request\b' <<<"$body" \
+              && ! grep -q 'merge_group' <<<"$body" \
+              && ! grep -q 'workflow_call' <<<"$body"; then
+              msg="Runs on pull_request but not merge_group; as a required check it would stall the merge queue."
+              echo "::warning file=$f,title=Repo standards::$msg"
+              summary "- ⚠️ \`$f\` runs on pull_request but not merge_group"
+            fi
+          done <<<"$files"
+
+          summary "- ✅ warnings only; nothing blocks"

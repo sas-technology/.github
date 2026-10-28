@@ -1,0 +1,103 @@
+# Quarterly ORG_SETTINGS.md drift-detection reminder.
+#
+# Creates a GitHub Issue on the first day of every quarter so that
+# maintainers remember to compare ORG_SETTINGS.md against the live
+# GitHub org and repo settings (per ORG_SETTINGS.md §Enforcement and
+# audit).
+#
+# The job is idempotent: if an open issue already exists for the
+# current quarter it exits without creating a duplicate.
+#
+# Schedule: 08:00 UTC on 1 Jan · 1 Apr · 1 Jul · 1 Oct.
+# Manual trigger: workflow_dispatch (useful for testing).
+#
+# Issue body template: .github/audit-issue-body.md
+
+name: Scheduled / Settings Audit Reminder
+
+on:
+  schedule:
+    - cron: "0 8 1 1,4,7,10 *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  open-audit-issue:
+    name: Open quarterly audit issue
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - name: Compute quarter identifier
+        id: q
+        shell: bash
+        run: |
+          set -euo pipefail
+          YEAR=$(date -u +%Y)
+          M=$(date -u +%-m)
+          if   [ "$M" -le 3 ]; then Q=Q1
+          elif [ "$M" -le 6 ]; then Q=Q2
+          elif [ "$M" -le 9 ]; then Q=Q3
+          else                       Q=Q4
+          fi
+          {
+            echo "id=${YEAR}-${Q}"
+            echo "label=settings-audit-${YEAR}-${Q}"
+            echo "title=chore: quarterly ORG_SETTINGS.md audit (${YEAR} ${Q})"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Ensure audit label exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ steps.q.outputs.label }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh label create "$LABEL" \
+            --repo "$GITHUB_REPOSITORY" \
+            --description "Quarterly ORG_SETTINGS.md audit" \
+            --color "0075ca" 2>/dev/null || true  # idempotent
+
+      - name: Check for existing open audit issue
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ steps.q.outputs.label }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          COUNT=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --label "$LABEL" \
+            --state open \
+            --json number \
+            --jq length)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Render issue body from template
+        if: steps.existing.outputs.count == '0'
+        env:
+          QID: ${{ steps.q.outputs.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Substitute {{QID}} placeholder in the template.
+          sed "s/{{QID}}/${QID}/g" .github/audit-issue-body.md > /tmp/audit-body.md
+
+      - name: Open quarterly audit issue
+        if: steps.existing.outputs.count == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.q.outputs.title }}
+          LABEL: ${{ steps.q.outputs.label }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TITLE" \
+            --label "$LABEL" \
+            --body-file /tmp/audit-body.md
