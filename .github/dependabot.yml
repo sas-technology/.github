@@ -4,10 +4,13 @@
 version: 2
 updates:
   - package-ecosystem: "github-actions"
+    target-branch: "staging"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
