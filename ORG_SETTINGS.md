@@ -38,12 +38,17 @@ importing the ruleset before they exist fails. It hardcodes this
 repo's numeric ID (`1211111495`) for that rule, which only changes if
 this repo is deleted and recreated.
 
-**Merge queue.** The ruleset puts every repo on a squash merge queue
-(batch size 1, so a major release merges alone). A queued PR runs its
-required checks on the `merge_group` event; a repo whose own required
-checks (for example `digital-toolkit`'s `TypeScript`) don't trigger on
-`merge_group` will stall queued PRs until that workflow adds the
-trigger. `repo-standards.yml` warns about exactly this.
+**Merge queue.** Org rulesets cannot hold a `merge_queue` rule, so it
+is a repo-level ruleset (`github-rulesets/repo/merge-queue.json`)
+applied to each repo by `scripts/apply-org-settings.sh`: squash, batch
+size 1, on the default branch and `staging`. GitHub offers merge queue
+on public repos on any plan but on private repos only with GitHub
+Enterprise Cloud, so on the Team plan it runs on the public repos
+(`.github`, `knowledge`, `sas-default-app`, `sas-knowledge`) and the
+script skips the private ones. A queued PR runs its required checks on
+the `merge_group` event; a repo whose own required checks don't
+trigger on `merge_group` will stall until that workflow adds it.
+`repo-standards.yml` warns about exactly this.
 
 **Staging.** Every repo has a `staging` branch. A merge into `staging`
 is tagged as the next patch (`staging-version.yml`), a release from
