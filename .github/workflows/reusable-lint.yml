@@ -148,6 +148,27 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7
         with:
           node-version: 20
+      # A repo's own Prettier config can load plugins (e.g. the Tailwind
+      # one); install its dependencies so Prettier can resolve them.
+      - name: Install the repo's Prettier plugins
+        run: |
+          set -euo pipefail
+          uses_plugins=false
+          for cfg in .prettierrc .prettierrc.json .prettierrc.yml .prettierrc.yaml prettier.config.js prettier.config.mjs; do
+            if [ -f "$cfg" ] && grep -q "plugins" "$cfg"; then uses_plugins=true; fi
+          done
+          if [ -f package.json ] && grep -q '"plugins"' package.json; then uses_plugins=true; fi
+          if [ "$uses_plugins" != true ]; then echo "No Prettier plugins configured."; exit 0; fi
+          corepack enable
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile --ignore-scripts
+          elif [ -f yarn.lock ]; then
+            yarn install --frozen-lockfile --ignore-scripts
+          elif [ -f package-lock.json ]; then
+            npm ci --ignore-scripts
+          else
+            echo "::warning::Prettier plugins configured but no lockfile found; skipping install."
+          fi
       - name: Check formatting
         run: |
           set -euo pipefail
