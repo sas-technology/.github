@@ -5,7 +5,10 @@
 # is imported, GitHub runs THIS file on every pull request in every
 # repo in the org, without that repo needing a lint.yml of its own.
 #
-# It simply calls the reusable lint workflow.
+# It simply calls the reusable lint workflow. Uses the local-path form
+# (./.github/workflows/...) rather than an owner/repo@ref pin so it
+# always resolves against the ref this file itself is running from.
+
 name: Org lint gate
 
 on:
@@ -16,4 +19,4 @@ permissions:
 
 jobs:
   lint:
-    uses: sas-technology/.github/.github/workflows/reusable-lint.yml@main
+    uses: ./.github/workflows/reusable-lint.yml
