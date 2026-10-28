@@ -1,0 +1,195 @@
+# Semgrep: static analysis of changed files, with the open-source Semgrep
+# CLI and the community rules from the Semgrep Registry.
+# No Semgrep account or token: nothing is sent to Semgrep's cloud, and
+# metrics are off.
+#
+# TWO WAYS TO RUN IT
+#
+# 1. Org-required. An org ruleset names this file in a
+#    "Require workflows to pass" rule (repository sas-technology/.github, ref
+#    refs/heads/main, targets ~DEFAULT_BRANCH and staging). GitHub runs it
+#    on every pull request into those branches, in every repo the ruleset
+#    covers. A ruleset-run workflow ignores `on:` filters, so the job reads
+#    the event itself. NEVER put it on a ruleset that targets all branches
+#    (a required workflow also blocks direct pushes to the branches it
+#    covers).
+# 2. Called from a repo's own workflow, for example on push to main:
+#
+#      jobs:
+#        semgrep:
+#          uses: sas-technology/.github/.github/workflows/reusable-semgrep.yml@main
+#
+# WHAT IT SCANS
+#
+#   pull_request   only findings the pull request introduces: Semgrep's
+#                  --baseline-commit against the base branch commit.
+#   merge_group    the same, against the queue's base commit.
+#   anything else  the whole repository.
+#
+# Rules: p/typescript, p/javascript, p/react, p/python, p/rust, p/secrets
+# and p/owasp-top-ten, plus a repo's own `.semgrep.yml` or `.semgrep/`
+# rules where present. `.semgrepignore` and `# nosemgrep` work as usual;
+# both live in the repo, so adding one shows in the pull request's diff.
+#
+# Astro: Semgrep has no Astro parser, so the TypeScript rules cannot read a
+# `.astro` file. For each changed `.astro` file, the frontmatter (between
+# the `---` fences) and every `<script>` block are copied into a `.ts` file
+# of the same name under a scratch directory and scanned with the same
+# rules; a finding names the original path with `.ts` appended. The base
+# versions are extracted too, so here also only new findings count. p/secrets is generic and reads
+# `.astro` files directly. Svelte is not extracted yet.
+#
+# Semgrep runs in its official image, pinned by digest. It reads the code
+# and never runs it; the token is read-only.
+
+name: Semgrep
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-findings:
+        description: Fail the job when Semgrep reports a finding.
+        type: boolean
+        default: true
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SEMGREP_IMAGE: semgrep/semgrep:1.179.0@sha256:93963d9295a366f59e4850127b1550400ee7b388f04fe144e4a1f6325d96e01b
+      RULES: p/typescript p/javascript p/react p/python p/rust p/secrets p/owasp-top-ten
+    steps:
+      - name: Resolve the baseline
+        id: range
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) base=$PR_BASE ;;
+            merge_group) base=$MG_BASE ;;
+            *) base="" ;;
+          esac
+          if [ -n "$base" ] && ! [[ "$base" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Unexpected base commit '$base'."
+            exit 1
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
+          # Semgrep's baseline mode needs the base commit and the history
+          # between it and HEAD.
+          fetch-depth: 0
+      - name: Extract Astro scripts
+        id: astro
+        env:
+          BASE: ${{ steps.range.outputs.base }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/astro"
+          mkdir -p "$out"
+          if [ -n "$BASE" ]; then
+            git diff --name-only -z --diff-filter=AMR "$BASE" HEAD -- '*.astro' > "$RUNNER_TEMP/astro.lst"
+          else
+            git ls-files -z -- '*.astro' > "$RUNNER_TEMP/astro.lst"
+          fi
+          # Frontmatter: the lines between the first two `---` fences.
+          # Scripts: every <script ...> ... </script> block. Blank lines
+          # stand in for everything else, so line numbers still match.
+          extract() {
+            awk '
+              NR == 1 && /^---[[:space:]]*$/ { fm = 1; print ""; next }
+              fm && /^---[[:space:]]*$/      { fm = 0; print ""; next }
+              fm                             { print; next }
+              /<script[ >]/                  { sc = 1; sub(/.*<script[^>]*>/, "") }
+              sc && /<\/script>/             { sub(/<\/script>.*/, ""); print; sc = 0; next }
+              sc                             { print; next }
+                                             { print "" }
+            '
+          }
+          # The extracts live in a scratch git repo with two commits, the
+          # base versions and then the head versions, so Semgrep's own
+          # baseline mode reports only what the change introduces.
+          g() { git -C "$out" -c user.name=semgrep -c user.email=semgrep@invalid "$@"; }
+          g init -q
+          n=0
+          if [ -n "$BASE" ]; then
+            while IFS= read -r -d '' f; do
+              if git cat-file -e "$BASE:$f" 2>/dev/null; then
+                mkdir -p "$out/$(dirname -- "$f")"
+                git show "$BASE:$f" | extract > "$out/$f.ts"
+              fi
+            done < "$RUNNER_TEMP/astro.lst"
+          fi
+          g add -A
+          g commit -q --allow-empty -m base
+          while IFS= read -r -d '' f; do
+            [ -f "$f" ] || continue
+            mkdir -p "$out/$(dirname -- "$f")"
+            extract < "$f" > "$out/$f.ts"
+            n=$((n + 1))
+          done < "$RUNNER_TEMP/astro.lst"
+          base_commit=$(g rev-parse HEAD)
+          g add -A
+          g commit -q --allow-empty -m head
+          {
+            echo "count=$n"
+            echo "dir=$out"
+            # No baseline for a full scan: every extract is reported.
+            if [ -n "$BASE" ]; then echo "base=$base_commit"; else echo "base="; fi
+          } >> "$GITHUB_OUTPUT"
+      - name: Semgrep
+        env:
+          BASE: ${{ steps.range.outputs.base }}
+          ASTRO_COUNT: ${{ steps.astro.outputs.count }}
+          ASTRO_DIR: ${{ steps.astro.outputs.dir }}
+          ASTRO_BASE: ${{ steps.astro.outputs.base }}
+          # A ruleset run has no inputs, so this is empty there: only an
+          # explicit false turns failing off.
+          FAIL: ${{ format('{0}', inputs.fail-on-findings) }}
+        run: |
+          set -uo pipefail
+          configs=()
+          for r in $RULES; do configs+=(--config "$r"); done
+          for local in .semgrep.yml .semgrep.yaml .semgrep; do
+            [ -e "$local" ] && configs+=(--config "/src/$local")
+          done
+          common=(--metrics=off --disable-version-check "${configs[@]}")
+          [ "$FAIL" != "false" ] && common+=(--error)
+          # run <host dir> <baseline commit or empty>
+          run() {
+            local dir=$1 base=$2
+            local extra=()
+            [ -n "$base" ] && extra=(--baseline-commit "$base")
+            docker run --rm \
+              -v "$PWD:/src:ro" -v "$dir:/scan" -w /scan \
+              -e SEMGREP_SEND_METRICS=off \
+              --entrypoint sh "$SEMGREP_IMAGE" -c \
+              'git config --global --add safe.directory /scan && exec semgrep scan "$@"' \
+              semgrep "${common[@]}" "${extra[@]}" .
+          }
+          rc=0
+          run "$PWD" "$BASE" || rc=$?
+          if [ "${ASTRO_COUNT:-0}" -gt 0 ]; then
+            echo "Scanning frontmatter and scripts of $ASTRO_COUNT .astro file(s)."
+            run "$ASTRO_DIR" "$ASTRO_BASE" || rc=$?
+          fi
+          {
+            echo "### Semgrep"
+            echo ""
+            if [ -n "$BASE" ]; then echo "Findings introduced since \`$BASE\`."; else echo "Full scan."; fi
+            echo ""
+            echo "Rules: \`$RULES\`. Astro files extracted: ${ASTRO_COUNT:-0}."
+            echo ""
+            if [ "$rc" -eq 0 ]; then echo "No blocking findings."; else echo "**Findings or an error; see the log.** Exit code $rc."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"

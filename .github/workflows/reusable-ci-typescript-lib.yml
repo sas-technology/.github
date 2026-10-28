@@ -1,0 +1,148 @@
+# Reusable workflow: TypeScript library / package CI.
+#
+# For pure TypeScript packages, CLIs, and SDK libraries that are NOT
+# Next.js applications (use reusable-ci-nextjs-monorepo.yml for those).
+# Works with both standalone packages and pnpm workspaces.
+#
+# Call from a caller workflow in a consuming repo:
+#
+#   jobs:
+#     ci:
+#       uses: sas-technology/.github/.github/workflows/reusable-ci-typescript-lib.yml@main
+#       with:
+#         node-version-file: .nvmrc
+#
+# The caller must grant `contents: read`.
+#
+# Assumes:
+#   - pnpm as the package manager with pnpm-lock.yaml committed
+#   - `typecheck` script in package.json: e.g. `tsc --noEmit`
+#   - `lint` script in package.json: ESLint, Biome, or equivalent
+#   - `test` script in package.json: Vitest, Jest, or equivalent
+#   - `build` script in package.json (optional, see skip-build input)
+#
+# Required status checks for repo rulesets (all four job names):
+#   tsc --noEmit, lint, test, build
+
+name: Reusable / CI / TypeScript library
+
+on:
+  workflow_call:
+    inputs:
+      node-version-file:
+        description: Path to the file pinning the Node version (.nvmrc, .node-version, etc.).
+        type: string
+        default: .nvmrc
+      skip-build:
+        description: |
+          Skip the build job. Set to true for packages that publish source
+          directly (e.g. type-only packages where tsc --noEmit is sufficient).
+        type: boolean
+        default: false
+      working-directory:
+        description: |
+          Directory in which to run pnpm commands. Set to a sub-directory path
+          when the TypeScript package is not at the repo root.
+        type: string
+        default: "."
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      typescript: ${{ steps.filter.outputs.typescript }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          fetch-depth: 0
+      - id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4
+        with:
+          filters: |
+            typescript:
+              - '**/*.ts'
+              - '**/*.tsx'
+              - '**/*.mts'
+              - '**/*.cts'
+              - '**/tsconfig*.json'
+              - '**/package.json'
+              - 'pnpm-lock.yaml'
+              - '.nvmrc'
+              - '.node-version'
+              - '.github/workflows/**'
+
+  typecheck:
+    name: tsc --noEmit
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7
+        with:
+          node-version-file: ${{ inputs.node-version-file }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  lint:
+    name: lint
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7
+        with:
+          node-version-file: ${{ inputs.node-version-file }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+
+  test:
+    name: test
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7
+        with:
+          node-version-file: ${{ inputs.node-version-file }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
+  build:
+    name: build
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true' && !inputs.skip-build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7
+        with:
+          node-version-file: ${{ inputs.node-version-file }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build

@@ -29,8 +29,8 @@ jobs:
     name: actionlint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: reviewdog/action-actionlint@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: reviewdog/action-actionlint@cfa6a621f27735ccc88d35af9d0608692fd9b9f7  # v1
         with:
           fail_level: error
 
@@ -38,7 +38,7 @@ jobs:
     name: JSON validity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - name: Validate every tracked JSON file
         run: |
           set -euo pipefail
@@ -55,9 +55,9 @@ jobs:
     name: prettier
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - name: Fetch org default config (used only if this repo has none)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           repository: sas-technology/.github
           path: .org-defaults
@@ -66,7 +66,7 @@ jobs:
           cp -n .org-defaults/.prettierrc . 2>/dev/null || true
           cp -n .org-defaults/.prettierignore . 2>/dev/null || true
           rm -rf .org-defaults
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7
         with:
           node-version: 20
       - run: npx --yes prettier@3 --check .
@@ -75,9 +75,9 @@ jobs:
     name: markdownlint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - name: Fetch org default config (used only if this repo has none)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           repository: sas-technology/.github
           path: .org-defaults
@@ -85,7 +85,7 @@ jobs:
         run: |
           cp -n .org-defaults/.markdownlint.jsonc . 2>/dev/null || true
           rm -rf .org-defaults
-      - uses: DavidAnson/markdownlint-cli2-action@v25
+      - uses: DavidAnson/markdownlint-cli2-action@696eb3f2509270d7b882d2aa68347bc676e7af34  # v25
         with:
           globs: "**/*.md"
 
@@ -93,9 +93,9 @@ jobs:
     name: yamllint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - name: Fetch org default config (used only if this repo has none)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           repository: sas-technology/.github
           path: .org-defaults
@@ -103,7 +103,7 @@ jobs:
         run: |
           cp -n .org-defaults/.yamllint.yaml . 2>/dev/null || true
           rm -rf .org-defaults
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
         with:
           python-version: "3.x"
       - run: pip install yamllint

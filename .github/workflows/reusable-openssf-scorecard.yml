@@ -1,0 +1,88 @@
+# Reusable workflow: OpenSSF Scorecard.
+#
+# Runs the OpenSSF Scorecard tool, which checks a repository against
+# supply-chain security best practices and publishes a public score.
+# Results are uploaded to GitHub's Security tab as a SARIF file.
+#
+# Scorecard checks include: branch protection, CI/CD, code review,
+# dependency version pinning, SAST, signed releases, token permissions,
+# vulnerability reporting, and more.
+#
+# Call from a caller workflow in a consuming repo:
+#
+#   name: Scorecard
+#   on:
+#     branch_protection_rule:
+#     schedule:
+#       - cron: '30 1 * * 1'   # Weekly on Monday
+#     push:
+#       branches: [main]
+#
+#   jobs:
+#     scorecard:
+#       uses: sas-technology/.github/.github/workflows/reusable-openssf-scorecard.yml@main
+#       with:
+#         publish-results: true
+#       permissions:
+#         security-events: write
+#         id-token: write
+#         contents: read
+#         actions: read
+#
+# The caller must grant:
+#   security-events: write  (upload SARIF to GitHub Security tab)
+#   id-token: write         (publish results to the OpenSSF API)
+#   contents: read
+#   actions: read           (inspect workflow permissions)
+#
+# Note: `publish-results: true` requires the repository to be PUBLIC.
+# For private repos set `publish-results: false`.
+
+name: Reusable / OpenSSF Scorecard
+
+on:
+  workflow_call:
+    inputs:
+      publish-results:
+        description: |
+          Publish results to the OpenSSF REST API so the public score badge
+          reflects the current state. Set to false for private repos.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  scorecard:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
+
+      - name: Run OpenSSF Scorecard
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc  # v2.4.4
+        with:
+          results_file: scorecard-results.sarif
+          results_format: sarif
+          publish_results: ${{ inputs.publish-results }}
+
+      - name: Upload SARIF artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: scorecard-results
+          path: scorecard-results.sarif
+          retention-days: 5
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4
+        with:
+          sarif_file: scorecard-results.sarif
+          category: ossf-scorecard

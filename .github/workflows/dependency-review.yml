@@ -1,0 +1,358 @@
+# Dependency review: the org-required dependency check.
+#
+# Two jobs, both diff-aware, so a pull request that changes no dependency
+# passes:
+#
+#   review  actions/dependency-review-action. It compares the dependency
+#           graph of the base and head and fails on a newly added package
+#           with a known advisory of severity `high` or above (runtime and
+#           development scopes). The graph covers npm, pnpm, Yarn, Cargo,
+#           pip, Poetry, uv and the other ecosystems GitHub supports.
+#   audit   a second opinion from each ecosystem's own auditor, run only on
+#           the lockfiles the pull request changes:
+#             package-lock.json / npm-shrinkwrap.json  npm audit (high+)
+#             pnpm-lock.yaml                           pnpm audit (high+)
+#             Cargo.lock                               cargo audit (any)
+#             uv.lock                                  pip-audit (any), via uv export
+#             requirements*.txt                        pip-audit (any), ranges resolved
+#                                                      with uv pip compile --no-build
+#           RustSec and PyPI advisories often carry no severity, so those
+#           auditors fail on any advisory. A Python file that cannot be
+#           resolved to exact PyPI versions is reported as a warning and
+#           left to `review`; so are yarn.lock, bun.lock and poetry.lock.
+#
+# HOW IT IS ENFORCED
+#
+# An org ruleset names this file in a "Require workflows to pass"
+# rule (repository sas-technology/.github, ref refs/heads/main, targets
+# ~DEFAULT_BRANCH and staging). GitHub then runs it on every pull request
+# into those branches in every repo the ruleset covers. A ruleset-run
+# workflow ignores `on:` filters, so each job checks the event itself:
+# pull_request and merge_group are checked, anything else passes with a
+# notice. NEVER put it on a ruleset that targets all branches (a required
+# workflow also blocks direct pushes to the branches it covers).
+#
+# Every action is pinned to a commit. Nothing here runs the pull request's
+# code or reads its tool config: each auditor runs on copies of the files it
+# needs in an empty scratch directory, pip-audit installs nothing
+# (--no-deps --disable-pip), and the token is read-only.
+
+name: Dependency review
+
+on:
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: dependency-review-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  review:
+    name: review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Resolve the range to review
+        id: range
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD: ${{ github.event.merge_group.head_sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) base=$PR_BASE head=$PR_HEAD ;;
+            merge_group) base=$MG_BASE head=$MG_HEAD ;;
+            *)
+              echo "::notice::Dependency review checks pull requests and merge queue groups; nothing to do on '$EVENT'."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          for sha in "$base" "$head"; do
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Unexpected commit id '$sha'."; exit 1; }
+          done
+          { echo "base=$base"; echo "head=$head"; echo "skip=false"; } >> "$GITHUB_OUTPUT"
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
+        if: steps.range.outputs.skip == 'false'
+        with:
+          base-ref: ${{ steps.range.outputs.base }}
+          head-ref: ${{ steps.range.outputs.head }}
+          fail-on-severity: high
+          fail-on-scopes: runtime, development
+          # A required workflow can run on a fork's pull request, where the
+          # token is read-only; the summary goes to the job summary instead.
+          comment-summary-in-pr: never
+
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: List the lockfiles this change touches
+        id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          changed="$RUNNER_TEMP/changed.txt"
+          case "$EVENT" in
+            pull_request)
+              [[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::Unexpected PR number."; exit 1; }
+              # The files API stops at 3000 files; a bigger change is audited in full.
+              gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate \
+                --jq '.[] | select(.status != "removed") | .filename' > "$changed"
+              if [ "$(wc -l < "$changed")" -ge 3000 ]; then echo "all=true" >> "$GITHUB_OUTPUT"; fi
+              ;;
+            merge_group)
+              [[ "$MG_BASE" =~ ^[0-9a-f]{40}$ && "$MG_HEAD" =~ ^[0-9a-f]{40}$ ]] \
+                || { echo "::error::Unexpected merge group range."; exit 1; }
+              # The compare API lists at most 300 files; a bigger group is audited in full.
+              gh api "repos/$REPO/compare/$MG_BASE...$MG_HEAD" \
+                --jq '.files[] | select(.status != "removed") | .filename' > "$changed"
+              if [ "$(wc -l < "$changed")" -ge 300 ]; then echo "all=true" >> "$GITHUB_OUTPUT"; fi
+              ;;
+            *)
+              echo "::notice::The audit checks pull requests and merge queue groups; nothing to do on '$EVENT'."
+              : > "$changed"
+              ;;
+          esac
+          echo "list=$changed" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
+      - name: Choose the auditors
+        id: pick
+        env:
+          LIST: ${{ steps.files.outputs.list }}
+          ALL: ${{ steps.files.outputs.all }}
+        run: |
+          set -euo pipefail
+          targets="$RUNNER_TEMP/targets.txt"
+          if [ "$ALL" = "true" ]; then
+            git ls-files > "$RUNNER_TEMP/all.txt"
+            src="$RUNNER_TEMP/all.txt"
+          else
+            src="$LIST"
+          fi
+          # Keep lockfiles that exist in the checkout (a path in the list is
+          # data from the pull request, so it is only ever quoted).
+          : > "$targets"
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            case "$(basename -- "$f")" in
+              package-lock.json|npm-shrinkwrap.json|pnpm-lock.yaml|Cargo.lock|uv.lock|requirements*.txt|yarn.lock|bun.lock|bun.lockb|poetry.lock)
+                printf '%s\n' "$f" >> "$targets" ;;
+            esac
+          done < "$src"
+          has() { grep -Eq "$1" "$targets" && echo true || echo false; }
+          {
+            echo "targets=$targets"
+            echo "any=$( [ -s "$targets" ] && echo true || echo false )"
+            echo "cargo=$(has '(^|/)Cargo\.lock$')"
+            echo "python=$(has '(^|/)(uv\.lock|requirements[^/]*\.txt)$')"
+          } >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@031bfc83e95968e35021f0e138651dba756b815e  # cargo-audit
+        if: steps.pick.outputs.cargo == 'true'
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        if: steps.pick.outputs.python == 'true'
+      - name: Audit the changed lockfiles
+        if: steps.pick.outputs.any == 'true'
+        env:
+          TARGETS: ${{ steps.pick.outputs.targets }}
+          PNPM_VERSION: 10.34.6
+          PIP_AUDIT_VERSION: 2.10.1
+          REGISTRY: https://registry.npmjs.org/
+          # WHAT BLOCKS (owner, 2026-10-21: "latest shouldn't be a blocker
+          # on too old of a version"). A high or critical advisory fails the
+          # job only while a newer release of the package exists to move to.
+          # A package already at its newest published release (no fix yet)
+          # gets a warning instead, so a repo is never red for something it
+          # cannot change. Judged against the registry's `latest`, not the
+          # advisory's patched range, which can lag a published fix.
+          #
+          # The org allowlist: advisories pnpm audit may ignore in EVERY
+          # repo. A repo's own auditConfig is stripped (below), so a waiver
+          # lives here, owner-reviewed, one line each with why and until when.
+          # Remove an entry the day a fix is published.
+          #   GHSA-vfj7-8cjw-p6xm  braces: no patched release; reaches repos
+          #                        only through lint/build tooling. Review
+          #                        by 2027-01-31.
+          AUDIT_ALLOW_GHSAS: >-
+            GHSA-vfj7-8cjw-p6xm
+        run: |
+          set -uo pipefail
+          read -r -a allow_ids <<<"$AUDIT_ALLOW_GHSAS"
+          allow_json=$(printf '%s\n' "${allow_ids[@]}" | jq -R . | jq -sc 'map(select(length > 0))')
+          root=$PWD
+          failed=0
+          summary() { printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; }
+          notes="$RUNNER_TEMP/audit-notes.md"
+          : > "$notes"
+          note() { printf '%s\n' "$1" >> "$notes"; }
+          # judge < "name<TAB>version<TAB>advisory<TAB>severity" lines: warn
+          # when the version is the package's latest, else error. Returns 1
+          # when anything blocks. Names come from the lockfile, so they are
+          # checked before they reach npm.
+          judge() {
+            local n v id sev latest blocked=0
+            while IFS=$'\t' read -r n v id sev; do
+              [ -n "$n" ] || continue
+              if [[ ! "$n" =~ ^(@[a-z0-9._~-]+/)?[a-z0-9._~-]+$ ]]; then
+                echo "::error file=$f::Unexpected package name in an advisory."
+                blocked=1; continue
+              fi
+              latest=$(cd "$w" || exit 1; npm view --registry="$REGISTRY" -- "$n@latest" version 2>/dev/null) || latest=""
+              if [ -n "$latest" ] && [ "$v" = "$latest" ]; then
+                echo "::warning file=$f::$n $v ($id, $sev) is the newest release; nothing to upgrade to yet, so not blocking."
+                note "- ⚠️ \`$f\`: \`$n@$v\` $id ($sev) is the newest release, not blocking"
+              else
+                echo "::error file=$f::$n $v ($id, $sev): ${latest:+$n $latest is published; }upgrade or override to a fixed version."
+                note "- ❌ \`$f\`: \`$n@$v\` $id ($sev), ${latest:-a newer version} is published"
+                blocked=1
+              fi
+            done
+            return "$blocked"
+          }
+          summary "### Dependency audit of changed lockfiles"
+          summary ""
+          summary "| Lockfile | Auditor | Result |"
+          summary "|---|---|---|"
+          # Each auditor runs in an empty scratch directory holding copies of
+          # the files it needs, so config the pull request controls (.npmrc,
+          # .pnpmfile.cjs, .cargo/audit.toml) can neither run code nor point
+          # the auditor elsewhere. npm and pnpm also get the registry on the
+          # command line, which outranks any config file.
+          pyaudit() {  # pyaudit <requirements file of exact pins>
+            uvx "pip-audit==$PIP_AUDIT_VERSION" -r "$1" --no-deps --disable-pip \
+              --progress-spinner off -f json -o "$w/audit.json" > /dev/null 2>&1
+            [ -s "$w/audit.json" ] || return 2  # not audited
+            n=$(jq '[.dependencies[].vulns | length] | add // 0' "$w/audit.json")
+            jq -r '.dependencies[] | select(.vulns | length > 0) | "\(.name) \(.version): \([.vulns[].id] | join(", "))"' "$w/audit.json"
+            [ "$n" -eq 0 ]
+          }
+          # Exact pins only: no options, editables, local paths or direct
+          # (git or URL) references, none of which are PyPI packages.
+          pins() { sed -e ':a' -e '/\\$/N; s/\\\n//; ta' "$1" | sed -E 's/[[:space:]]+--hash=[^[:space:]]+//g; s/[[:space:]]#.*$//' \
+            | grep -Ev '^[[:space:]]*(-|\.|/|$|#)|^[[:space:]]*[A-Za-z0-9._-]+(\[[^]]*\])?[[:space:]]*@|file:' || true; }
+          while IFS= read -r f; do
+            dir=$(dirname -- "$f")
+            name=$(basename -- "$f")
+            w=$(mktemp -d)
+            tool=""
+            rc=0
+            case "$name" in
+              package-lock.json|npm-shrinkwrap.json)
+                tool="npm audit"
+                cp -- "$root/$dir/package.json" "$root/$f" "$w/" 2>/dev/null
+                (cd "$w" && npm audit --package-lock-only --json --registry="$REGISTRY" > "$w/audit.json") || true
+                if jq -e '.vulnerabilities | type == "object"' "$w/audit.json" > /dev/null 2>&1; then
+                  # Packages with an advisory of their own (an object in via),
+                  # each installed version from the lockfile.
+                  jq -r --slurpfile lock "$w/$name" '.vulnerabilities[]
+                    | select(.severity == "high" or .severity == "critical")
+                    | select(any(.via[]; type == "object")) as $x
+                    | ([$x.via[] | objects | (.url // "" | split("/") | last)] | unique | join(",")) as $ids
+                    | $lock[0].packages // {} | to_entries[]
+                    | select(.key | endswith("node_modules/" + $x.name)) | .value.version // empty
+                    | [$x.name, ., $ids, $x.severity] | @tsv' "$w/audit.json" | sort -u > "$w/found.tsv"
+                  judge < "$w/found.tsv" || rc=1
+                else
+                  rc=1
+                fi
+                ;;
+              pnpm-lock.yaml)
+                tool="pnpm audit"
+                cp -- "$root/$f" "$w/"
+                # The scratch directory has no .pnpmfile.cjs or .npmrc, and
+                # package.json loses the fields pnpm reads settings from
+                # (auditConfig ignores, overrides, a pnpm version to switch to).
+                # Only the org allowlist (AUDIT_ALLOW_GHSAS) is put back.
+                jq --argjson ids "$allow_json" 'del(.pnpm, .packageManager, .devEngines)
+                  | if ($ids | length) > 0 then .pnpm = {auditConfig: {ignoreGhsas: $ids}} else . end' \
+                  "$root/$dir/package.json" > "$w/package.json" 2>/dev/null || rc=1
+                [ "$rc" -eq 0 ] && { (cd "$w" && npm_config_manage_package_manager_versions=false \
+                  npx --yes --registry="$REGISTRY" "pnpm@$PNPM_VERSION" audit --json \
+                  --registry="$REGISTRY" --config.manage-package-manager-versions=false > "$w/audit.json") || true
+                  if jq -e '.advisories | type == "object"' "$w/audit.json" > /dev/null 2>&1; then
+                    jq -r '.advisories[] | select(.severity == "high" or .severity == "critical")
+                      | . as $a | .findings[].version | [$a.module_name, ., ($a.github_advisory_id // "advisory"), $a.severity] | @tsv' \
+                      "$w/audit.json" | sort -u > "$w/found.tsv"
+                    judge < "$w/found.tsv" || rc=1
+                  else
+                    rc=1
+                  fi; }
+                ;;
+              Cargo.lock)
+                tool="cargo audit"
+                cp -- "$root/$f" "$w/Cargo.lock"
+                (cd "$w" && cargo audit --file Cargo.lock) || rc=1
+                ;;
+              uv.lock)
+                tool="pip-audit (uv export)"
+                if (cd "$root/$dir" && uv export --frozen --no-hashes --format requirements-txt \
+                      --all-extras --all-groups --no-emit-workspace --no-header --no-annotate \
+                      -o "$w/export.txt" > /dev/null 2>&1); then
+                  pins "$w/export.txt" > "$w/pins.txt"
+                  pyaudit "$w/pins.txt" || rc=$?
+                else
+                  rc=2
+                fi
+                ;;
+              requirements*.txt)
+                tool="pip-audit"
+                pins "$root/$f" > "$w/req.txt"
+                # Resolve ranges to exact pins from wheels only (--no-build
+                # never runs a package's build code).
+                if (cd "$w" && uv pip compile --no-build --quiet --no-header --no-annotate req.txt -o pins.txt > /dev/null 2>&1); then
+                  pyaudit "$w/pins.txt" || rc=$?
+                else
+                  # Something in the tree ships no wheel: audit the exact
+                  # pins the file names, and leave the rest to review.
+                  grep -E '^[[:space:]]*[A-Za-z0-9._-]+(\[[^]]*\])?[[:space:]]*==[^*;[:space:]]+[[:space:]]*(;.*)?$' "$w/req.txt" \
+                    > "$w/direct.txt" || true
+                  if [ -s "$w/direct.txt" ]; then
+                    pyaudit "$w/direct.txt" || rc=$?
+                    [ "$rc" -eq 0 ] && rc=3
+                  else
+                    rc=2
+                  fi
+                fi
+                ;;
+              *)
+                tool="(dependency review only)"
+                ;;
+            esac
+            case "$rc" in
+              0) summary "| \`$f\` | $tool | pass |" ;;
+              3)
+                echo "::warning file=$f::$tool audited only the exact pins here; ranges and their dependencies are left to review."
+                summary "| \`$f\` | $tool | pass (exact pins only) |"
+                ;;
+              2)
+                echo "::warning file=$f::$tool could not resolve this file to exact versions; it is covered by the review job only."
+                summary "| \`$f\` | $tool | not audited (review only) |"
+                ;;
+              *)
+                failed=1
+                echo "::error file=$f::$tool reported advisories, or could not read this lockfile."
+                summary "| \`$f\` | $tool | **fail** |"
+                ;;
+            esac
+          done < "$TARGETS"
+          if [ -s "$notes" ]; then summary ""; cat "$notes" >> "$GITHUB_STEP_SUMMARY"; fi
+          exit "$failed"
+      - name: Nothing to audit
+        if: steps.pick.outputs.any != 'true'
+        run: echo "No lockfile changed; nothing to audit." >> "$GITHUB_STEP_SUMMARY"

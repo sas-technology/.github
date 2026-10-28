@@ -1,0 +1,33 @@
+---
+# Lint CI for sas-technology/.github.
+#
+# A thin caller of the reusable lint workflow, run on this repo's own
+# changes (by local path, so a PR that edits reusable-lint.yml runs the
+# edited copy) and on pushes to main and staging. The "Main release"
+# workflow waits for this one to pass before it tags a release.
+#
+# All five jobs (actionlint, JSON validity, prettier, markdownlint,
+# yamllint) are blocking. CI never auto-fixes; the developer fixes
+# locally and pushes.
+
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main, staging]
+  # Required checks must also report on a merge queue's gh-readonly-queue/**
+  # ref, or a queued PR waits until the queue times it out.
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    uses: ./.github/workflows/reusable-lint.yml

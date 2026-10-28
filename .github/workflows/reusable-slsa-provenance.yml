@@ -1,0 +1,102 @@
+# Reusable workflow: SLSA L2 build provenance attestation.
+#
+# Downloads a named build artifact, generates SHA-256 checksums for
+# every file in it, and creates a GitHub Artifact Attestation (SLSA L2
+# provenance) signed with a short-lived OIDC token via Sigstore.
+#
+# Attestations are stored in the repository's attestation store and
+# can be verified by anyone with read access using:
+#
+#   gh attestation verify <artifact-file> --repo <owner>/<repo>
+#
+# Call from a release or CI workflow in a consuming repo after your
+# build job has uploaded its artifact:
+#
+#   jobs:
+#     build:
+#       # ... builds and uploads artifact named 'dist'
+#
+#     provenance:
+#       needs: [build]
+#       uses: sas-technology/.github/.github/workflows/reusable-slsa-provenance.yml@main
+#       with:
+#         artifact-name: dist
+#       permissions:
+#         id-token: write
+#         attestations: write
+#         contents: read
+#
+# The caller must grant:
+#   id-token: write     — OIDC token for Sigstore signing
+#   attestations: write — write to the repository's attestation store
+#   contents: read
+#
+# Note: GitHub Artifact Attestations provide SLSA L2 provenance on
+# GitHub-hosted runners. For SLSA L3 (isolated hermetic build), use
+# the slsa-framework/slsa-github-generator directly.
+#
+# Inputs
+# ------
+# artifact-name   Name of the uploaded artifact to attest (required).
+# subject-path    Optional glob to attest a subset of files in the
+#                 artifact. Defaults to all files ('artifacts/**').
+
+name: Reusable / SLSA Provenance
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: Name of the build artifact to attest.
+        type: string
+        required: true
+      subject-path:
+        description: Glob within the downloaded artifact directory to attest.
+        type: string
+        default: "artifacts/**"
+    outputs:
+      checksums-artifact:
+        description: Name of the uploaded SHA256SUMS artifact.
+        value: ${{ jobs.provenance.outputs.checksums-artifact }}
+
+permissions:
+  contents: read
+
+jobs:
+  provenance:
+    name: Attest build provenance
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write      # Sigstore OIDC token
+      attestations: write  # GitHub Artifact Attestation store
+      contents: read
+    outputs:
+      checksums-artifact: ${{ steps.upload.outputs.artifact-name }}
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: artifacts
+
+      - name: Generate SHA-256 checksums
+        id: sha256
+        shell: bash
+        run: |
+          set -euo pipefail
+          find artifacts -type f | sort | xargs sha256sum > SHA256SUMS
+          echo "=== SHA-256 checksums ==="
+          cat SHA256SUMS
+
+      - name: Upload SHA256SUMS artifact
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sha256sums-${{ inputs.artifact-name }}
+          path: SHA256SUMS
+          retention-days: 90
+
+      - name: Attest build provenance (SLSA L2)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: ${{ inputs.subject-path }}
