@@ -127,8 +127,9 @@ step_queue() {
 
 step_repos() {
   echo "== 3. Repo merge settings"
-  # delete_branch_on_merge stays false: it deletes `staging` after every staging -> main release PR.
-  local payload='{"allow_merge_commit":false,"allow_squash_merge":true,"allow_rebase_merge":true,"delete_branch_on_merge":false,"allow_auto_merge":true,"allow_update_branch":true,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}'
+  # delete_branch_on_merge is on. The org ruleset's `deletion` rule protects main and
+  # staging, so the auto-delete never removes them after a release PR.
+  local payload='{"allow_merge_commit":false,"allow_squash_merge":true,"allow_rebase_merge":true,"delete_branch_on_merge":true,"allow_auto_merge":true,"allow_update_branch":true,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}'
   local repo
   for repo in $(gh api --paginate "/orgs/$ORG/repos" --jq '.[] | select(.archived|not) | .name'); do
     if [ "$DRY" -eq 1 ]; then
