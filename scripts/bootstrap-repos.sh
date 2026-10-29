@@ -181,8 +181,13 @@ bootstrap_repo() {
 }
 
 adopt_files() {
-  local repo=$1 db=$2 ready=$3 line target source alts missing="" open sha
+  local repo=$1 db=$2 ready=$3 line target source alts missing="" open sha n pending=""
+  # Files an earlier manual adoption PR already adds count as covered, so the two never collide.
+  for n in $(gh api "/repos/$ORG/$repo/pulls?state=open&per_page=100" --jq '.[] | select(.head.ref == "adopt-org-standards") | .number' 2>/dev/null); do
+    pending="$pending $(gh api "/repos/$ORG/$repo/pulls/$n/files?per_page=100" --jq '.[].filename' 2>/dev/null | tr '\n' ' ')"
+  done
   while IFS='|' read -r target source alts; do
+    case " $pending " in *" $target "*) continue ;; esac
     # shellcheck disable=SC2086
     if [ "$ready" -eq 0 ] || ! present_any "$repo" "$db" $alts; then
       missing="$missing $target"
@@ -190,9 +195,8 @@ adopt_files() {
   done <<<"$FILES"
   [ -z "$missing" ] && return
 
-  # An earlier manual adoption PR counts too, so the two never collide on the same files.
   open=$(gh api "/repos/$ORG/$repo/pulls?state=open&per_page=100" \
-    --jq "[.[] | select(.head.ref == \"$BRANCH\" or .head.ref == \"adopt-org-standards\")] | length" 2>/dev/null || echo 0)
+    --jq "[.[] | select(.head.ref == \"$BRANCH\")] | length" 2>/dev/null || echo 0)
   if [ "$open" -gt 0 ]; then
     echo "  = adoption PR already open (missing:$missing)"
     return
