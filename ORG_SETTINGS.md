@@ -124,7 +124,7 @@ which makes every repo match the org standard:
 | Merge settings     | merge/squash/rebase allowed, auto-merge on, update-branch on, **delete head branch on merge on** (`main` and `staging` are protected from deletion by the ruleset's `deletion` rule) |
 | Immutable releases | on                                                                                                                                                                                   |
 | Standard files     | AGENTS.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, PR template, CODEOWNERS, README, proposed in one PR into `staging` from `bootstrap/org-standards`                       |
-| CODEOWNERS team    | `edtech` gets write access to every repo (workflow passes `--grant-team`)                                                                                                                     |
+| CODEOWNERS team    | `edtech` gets write access to every repo (workflow passes `--grant-team`)                                                                                                            |
 
 Preview any time with `scripts/bootstrap-repos.sh --dry-run`.
 
