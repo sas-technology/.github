@@ -1,0 +1,68 @@
+# Daily org bootstrap: brings every repo up to the org defaults (merge
+# settings, staging branch, immutable releases, standard files via PR).
+# GitHub has no org-level default for these, so a new repo is bare until
+# the next run. Trigger it by hand from the Actions tab for an instant fix.
+#
+# It runs scripts/bootstrap-repos.sh with a short-lived token minted from
+# the sas-technology bootstrap GitHub App (scripts/create-bootstrap-app.py
+# creates the app and stores BOOTSTRAP_APP_CLIENT_ID plus the private key
+# in the `org-bootstrap` environment, which only `main` can use).
+#
+# Until the app exists the job is skipped, not failed.
+
+name: Bootstrap repos
+
+on:
+  schedule:
+    - cron: "23 19 * * *" # 03:23 Singapore time
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Only this repo (blank = every repo)"
+        required: false
+        type: string
+      dry_run:
+        description: "Report only, change nothing"
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: bootstrap-repos
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: bootstrap
+    if: ${{ vars.BOOTSTRAP_APP_CLIENT_ID != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: org-bootstrap
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Mint a GitHub App token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOOTSTRAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.BOOTSTRAP_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Bootstrap every repo
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          INPUT_REPO: ${{ inputs.repo }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=(--grant-team)
+          if [ "$INPUT_DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          if [ -n "$INPUT_REPO" ]; then args+=(--repo "$INPUT_REPO"); fi
+          scripts/bootstrap-repos.sh ${args[@]+"${args[@]}"}

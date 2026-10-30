@@ -36,8 +36,8 @@ own `CONTRIBUTING.md` says otherwise.
   workflow](./.github/workflows/reusable-lint.yml)) before merge.
 - At least one review approval is required (see the org ruleset in
   [`github-rulesets/org-wide-main-protection.json`](./github-rulesets/org-wide-main-protection.json)).
-- Squash or rebase merges only — no merge commits — to keep history
-  readable.
+- Squash, rebase, or merge commits are all accepted; pick whichever keeps
+  history readable for the change.
 
 ## Code review
 
