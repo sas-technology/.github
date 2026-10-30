@@ -26,10 +26,10 @@ For each JSON file in [`github-rulesets/`](./github-rulesets/):
 Or run `scripts/apply-org-rulesets.sh` (imports both files as
 _disabled_; add `--active` to enforce, `--dry-run` to preview).
 
-| File                            | What it does                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `org-wide-main-protection.json` | On every repo's default branch **and `staging`**: no deletion, no force-push, linear history, PR required (0 approvals), review threads resolved, squash/rebase only, **squash merge queue**, the five `lint / *` checks up to date, and the org-required workflows `org-lint.yml`, `release-version-check.yml` and `repo-standards.yml`. Org admins can bypass only through a pull request, never by pushing straight to the branch. |
-| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases.                                                                                                                                                                                                                                                                                                                |
+| File                            | What it does                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `org-wide-main-protection.json` | On every repo's default branch **and `staging`**: no deletion, no force-push, PR required (0 approvals), review threads resolved, merge/squash/rebase allowed, **squash merge queue**, the five `lint / *` checks up to date, and the org-required workflows `org-lint.yml`, `release-version-check.yml` and `repo-standards.yml`. Org admins can bypass only through a pull request, never by pushing straight to the branch. |
+| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases.                                                                                                                                                                                                                                                                                                         |
 
 **Merge the PR that adds the required workflows first.** The
 `workflows` rule names three files on this repo's `main`
@@ -118,13 +118,13 @@ workflow (`bootstrap-repos.yml`, daily at 03:23 Singapore time, or run
 it by hand from the Actions tab) runs `scripts/bootstrap-repos.sh`,
 which makes every repo match the org standard:
 
-| Item               | Standard                                                                                                                                                                    |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Branches           | a default branch and `staging` exist                                                                                                                                        |
-| Merge settings     | squash/rebase only, auto-merge on, update-branch on, **delete head branch on merge on** (`main` and `staging` are protected from deletion by the ruleset's `deletion` rule) |
-| Immutable releases | on                                                                                                                                                                          |
-| Standard files     | AGENTS.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, PR template, CODEOWNERS, README, proposed in one PR into `staging` from `bootstrap/org-standards`              |
-| CODEOWNERS team    | warns when `edtech` can't see the repo (`--grant-team` fixes it)                                                                                                            |
+| Item               | Standard                                                                                                                                                                             |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Branches           | a default branch and `staging` exist                                                                                                                                                 |
+| Merge settings     | merge/squash/rebase allowed, auto-merge on, update-branch on, **delete head branch on merge on** (`main` and `staging` are protected from deletion by the ruleset's `deletion` rule) |
+| Immutable releases | on                                                                                                                                                                                   |
+| Standard files     | AGENTS.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, PR template, CODEOWNERS, README, proposed in one PR into `staging` from `bootstrap/org-standards`                       |
+| CODEOWNERS team    | `edtech` gets write access to every repo (workflow passes `--grant-team`)                                                                                                                     |
 
 Preview any time with `scripts/bootstrap-repos.sh --dry-run`.
 

@@ -25,7 +25,7 @@ them (issues, pull requests, discussions, commit messages).
 ## Reporting
 
 If something crosses the line, report it to the SAS Technology
-department lead or to **[it-security@sas.edu.sg](mailto:it-security@sas.edu.sg)**.
+department lead or to **[edtech@sas.edu.sg](mailto:edtech@sas.edu.sg)**.
 Reports are handled privately and taken seriously.
 
 ## Attribution

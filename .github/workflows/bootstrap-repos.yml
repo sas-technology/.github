@@ -62,7 +62,7 @@ jobs:
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          args=()
+          args=(--grant-team)
           if [ "$INPUT_DRY_RUN" = "true" ]; then args+=(--dry-run); fi
           if [ -n "$INPUT_REPO" ]; then args+=(--repo "$INPUT_REPO"); fi
           scripts/bootstrap-repos.sh ${args[@]+"${args[@]}"}
