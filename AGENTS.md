@@ -23,6 +23,22 @@ its own agent sessions.
    rules, FERPA/COPPA-adjacent handling, third-party integrations that
    touch student data, or infra/production changes. Ask a human.
 
+## Pull request hygiene
+
+Every PR an agent opens, in any repo:
+
+- **Assign the requesting human** as assignee (`--assignee <login>`). Never
+  leave a PR unassigned, and never assign the agent.
+- **Add labels**: one `type:` label (`type: feature`, `type: bug`,
+  `type: chore`, `type: docs`, `type: security`, `type: release`) plus any
+  repo-specific ones. Org standard labels exist in every repo.
+- **Target `staging`**; only a release PR (`staging` into `main`) targets
+  `main`, titled `Release: ...` and labelled `type: release`.
+- **Fill in the PR template**: what changed and why, the related issue, the
+  checklist, and the AI-assistance note.
+- The org workflow `pr-metadata.yml` fills in a missing assignee and label as
+  a backstop; don't rely on it.
+
 ## Expected behavior
 
 - Follow this repo's own `CONTRIBUTING.md` and lint/format config
