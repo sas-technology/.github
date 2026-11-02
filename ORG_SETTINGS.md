@@ -26,10 +26,10 @@ For each JSON file in [`github-rulesets/`](./github-rulesets/):
 Or run `scripts/apply-org-rulesets.sh` (imports both files as
 _disabled_; add `--active` to enforce, `--dry-run` to preview).
 
-| File                            | What it does                                                                                                                                                                                                                                                                                                                                                     |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `org-wide-main-protection.json` | On every repo's default branch **and `staging`**: no deletion, no force-push, linear history, PR required (0 approvals), review threads resolved, squash/rebase only, **squash merge queue**, the five `lint / *` checks up to date, and the org-required workflows `org-lint.yml`, `release-version-check.yml` and `repo-standards.yml`. Org admins can bypass. |
-| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases.                                                                                                                                                                                                                                           |
+| File                            | What it does                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `org-wide-main-protection.json` | On every repo's default branch **and `staging`**: no deletion, no force-push, linear history, PR required (0 approvals), review threads resolved, squash/rebase only, **squash merge queue**, the five `lint / *` checks up to date, and the org-required workflows `org-lint.yml`, `release-version-check.yml` and `repo-standards.yml`. Org admins can bypass only through a pull request, never by pushing straight to the branch. |
+| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases.                                                                                                                                                                                                                                                                                                                |
 
 **Merge the PR that adds the required workflows first.** The
 `workflows` rule names three files on this repo's `main`
@@ -83,17 +83,16 @@ the branch-protection limitation above — check what's actually offered
 for this org's plan on the settings page itself before assuming it's
 available.
 
-## 3. Create the placeholder GitHub teams
+## 3. GitHub teams
 
-`CODEOWNERS.example` and `.github/CODEOWNERS` in this repo reference
-teams that don't exist yet:
+Teams that exist: `edtech` (the default CODEOWNERS team for repos the
+bootstrap sets up), `innovation`, `maintainers` and `security` (the
+last two are what `CODEOWNERS.example` and `.github/CODEOWNERS` in this
+repo name). Add members at **github.com/orgs/sas-technology/teams**.
 
-- `@sas-technology/maintainers`
-- `@sas-technology/security`
-
-Create them at **github.com/orgs/sas-technology/teams** and add the
-right people, or rename the references in those two files to teams
-you already have.
+A CODEOWNERS entry only works when the team has **write** access to
+the repo. `scripts/bootstrap-repos.sh` warns about repos where
+`edtech` has no access; `--grant-team` adds it.
 
 ## 4. Roll reusable workflows + Dependabot out per repo
 
@@ -110,6 +109,35 @@ configuration" in `README.md`):
   each repo and delete the ecosystem blocks that don't apply.
 - Copy `CODEOWNERS.example` → `.github/CODEOWNERS` in each repo once
   §3's teams exist.
+
+## 5. Daily repo bootstrap
+
+GitHub has no org-level default for repo merge settings, branches or
+standard files, so a new repo starts bare. The `Bootstrap repos`
+workflow (`bootstrap-repos.yml`, daily at 03:23 Singapore time, or run
+it by hand from the Actions tab) runs `scripts/bootstrap-repos.sh`,
+which makes every repo match the org standard:
+
+| Item               | Standard                                                                                                                                                                    |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Branches           | a default branch and `staging` exist                                                                                                                                        |
+| Merge settings     | squash/rebase only, auto-merge on, update-branch on, **delete head branch on merge on** (`main` and `staging` are protected from deletion by the ruleset's `deletion` rule) |
+| Immutable releases | on                                                                                                                                                                          |
+| Standard files     | AGENTS.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, PR template, CODEOWNERS, README, proposed in one PR into `staging` from `bootstrap/org-standards`              |
+| CODEOWNERS team    | warns when `edtech` can't see the repo (`--grant-team` fixes it)                                                                                                            |
+
+Preview any time with `scripts/bootstrap-repos.sh --dry-run`.
+
+**The GitHub App.** The workflow signs in as the `sas-technology-bootstrap`
+GitHub App, installed on **all repositories** (so new repos are covered
+automatically). It was created with `scripts/create-bootstrap-app.py`,
+which stored `BOOTSTRAP_APP_CLIENT_ID` (repo variable) and
+`BOOTSTRAP_APP_PRIVATE_KEY` (secret in the `org-bootstrap` environment,
+usable only from `main`). Permissions: administration, contents and
+pull requests write; members and metadata read. If the private key is
+ever exposed, generate a new one in the app's settings and replace the
+environment secret. The job is skipped, not failed, while
+`BOOTSTRAP_APP_CLIENT_ID` is unset.
 
 ## Review cadence
 
