@@ -5,7 +5,7 @@
 #   2. Security       (Dependabot alerts/updates, secret scanning + push protection,
 #                      applied to all repos and set as the default for new repos)
 #   3. Merge queue    (repo-level ruleset on every repo; org rulesets cannot hold merge_queue)
-#      Repo defaults  (squash/rebase only, auto-merge, update-branch)
+#      Repo defaults  (merge/squash/rebase, auto-merge, update-branch)
 #   4. Verify         (per repo: staging branch + the rules that apply to main and staging)
 #
 # Usage:
@@ -129,7 +129,7 @@ step_repos() {
   echo "== 3. Repo merge settings"
   # delete_branch_on_merge is on. The org ruleset's `deletion` rule protects main and
   # staging, so the auto-delete never removes them after a release PR.
-  local payload='{"allow_merge_commit":false,"allow_squash_merge":true,"allow_rebase_merge":true,"delete_branch_on_merge":true,"allow_auto_merge":true,"allow_update_branch":true,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}'
+  local payload='{"allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":true,"delete_branch_on_merge":true,"allow_auto_merge":true,"allow_update_branch":true,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}'
   local repo
   for repo in $(gh api --paginate "/orgs/$ORG/repos" --jq '.[] | select(.archived|not) | .name'); do
     if [ "$DRY" -eq 1 ]; then

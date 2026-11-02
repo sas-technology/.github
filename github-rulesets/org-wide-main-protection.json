@@ -28,9 +28,6 @@
       "type": "non_fast_forward"
     },
     {
-      "type": "required_linear_history"
-    },
-    {
       "type": "pull_request",
       "parameters": {
         "required_approving_review_count": 0,
@@ -40,7 +37,7 @@
         "required_review_thread_resolution": true,
         "require_extra_approval_for_unattributed_changes": false,
         "required_reviewers": [],
-        "allowed_merge_methods": ["squash", "rebase"]
+        "allowed_merge_methods": ["merge", "squash", "rebase"]
       }
     },
     {

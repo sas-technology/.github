@@ -12,9 +12,15 @@ default.
 1. Use GitHub's **[private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing/privately-reporting-a-security-vulnerability)**
    on the affected repository (Security tab → "Report a vulnerability"),
    if it's enabled there, **or**
-2. Email **[it-security@sas.edu.sg](mailto:it-security@sas.edu.sg)** with
+2. Email **[edtech@sas.edu.sg](mailto:edtech@sas.edu.sg)** with
    a description, affected repo/system, and reproduction steps if you
    have them.
+
+## General IT help
+
+For anything that isn't a security concern (access, accounts, devices,
+everyday IT questions), email
+**[ithelp@sas.edu.sg](mailto:ithelp@sas.edu.sg)**.
 
 ## What to expect
 

@@ -62,7 +62,7 @@ command -v jq >/dev/null || { echo "jq is not installed" >&2; exit 1; }
 # Keep in step with step_repos in apply-org-settings.sh.
 # delete_branch_on_merge is on. The org ruleset's `deletion` rule protects main and
 # staging, so the auto-delete never removes them after a release PR.
-DESIRED='{"allow_merge_commit":false,"allow_squash_merge":true,"allow_rebase_merge":true,"delete_branch_on_merge":true,"allow_auto_merge":true,"allow_update_branch":true,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}'
+DESIRED='{"allow_merge_commit":true,"allow_squash_merge":true,"allow_rebase_merge":true,"delete_branch_on_merge":true,"allow_auto_merge":true,"allow_update_branch":true,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}'
 
 # target | source in this repo (or generated:NAME) | paths that also count as present
 FILES='AGENTS.md|AGENTS.md|AGENTS.md
