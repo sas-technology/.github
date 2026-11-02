@@ -165,7 +165,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@031bfc83e95968e35021f0e138651dba756b815e  # cargo-audit
         if: steps.pick.outputs.cargo == 'true'
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa  # v10.3.1
         if: steps.pick.outputs.python == 'true'
       - name: Audit the changed lockfiles
         if: steps.pick.outputs.any == 'true'
