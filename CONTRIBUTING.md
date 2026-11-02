@@ -39,6 +39,12 @@ own `CONTRIBUTING.md` says otherwise.
 - Squash, rebase, or merge commits are all accepted; pick whichever keeps
   history readable for the change.
 
+## Pull request metadata
+
+Every PR has an assignee (you, as author), at least one `type:` label and a
+filled-in description. The org workflow `pr-metadata.yml` adds a missing
+assignee and label for you, but fill the description in yourself.
+
 ## Code review
 
 - Reviewers: focus on correctness, security, and maintainability

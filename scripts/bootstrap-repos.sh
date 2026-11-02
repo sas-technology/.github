@@ -13,6 +13,7 @@
 #      proposed in ONE pull request into `staging` from `bootstrap/org-standards`;
 #      nothing is pushed straight to a protected branch.
 #   6. The CODEOWNERS team can review the repo (warns; --grant-team adds it)
+#   7. The standard PR labels exist; bootstrap PRs are assigned to PR_ASSIGNEE
 #
 # Usage:
 #   scripts/bootstrap-repos.sh --dry-run             # report only, change nothing
@@ -26,6 +27,7 @@ set -uo pipefail
 
 ORG="${ORG:-sas-technology}"
 TEAM="${CODEOWNERS_TEAM:-edtech}"
+ASSIGNEE="${PR_ASSIGNEE:-sas-bfawcett}"
 BRANCH="bootstrap/org-standards"
 DRY=0
 DO_FILES=1
@@ -117,6 +119,25 @@ put_file() { # repo, branch, target, source
     -f content="$body" -f branch="$2" >/dev/null
 }
 
+# name|color|description
+LABELS='type: feature|0e8a16|New functionality
+type: bug|d73a4a|Something is broken
+type: chore|c5def5|Maintenance, config, tooling
+type: docs|0075ca|Documentation only
+type: security|b60205|Security fix or hardening
+type: release|5319e7|Release PR, staging to main
+standards|fbca04|Org standards adoption'
+
+ensure_labels() {
+  local repo=$1 have name color desc
+  have=$(gh api --paginate "/repos/$ORG/$repo/labels?per_page=100" --jq '.[].name' 2>/dev/null)
+  while IFS='|' read -r name color desc; do
+    grep -qxF "$name" <<<"$have" && continue
+    act "create label '$name'"
+    api -X POST "/repos/$ORG/$repo/labels" -f name="$name" -f color="$color" -f description="$desc" >/dev/null || fail "$repo: could not create label '$name'"
+  done <<<"$LABELS"
+}
+
 bootstrap_repo() {
   local repo=$1 info db nb sha changes cur ready=1
   echo "== $repo"
@@ -169,6 +190,9 @@ bootstrap_repo() {
     adopt_files "$repo" "$db" "$ready"
   fi
 
+  # 7. Standard labels
+  ensure_labels "$repo"
+
   # 6. CODEOWNERS team access
   if ! gh api "/orgs/$ORG/teams/$TEAM/repos/$ORG/$repo" --silent 2>/dev/null; then
     if [ "$GRANT_TEAM" -eq 1 ]; then
@@ -214,11 +238,13 @@ adopt_files() {
     has_file "$repo" "$BRANCH" "$target" && continue
     put_file "$repo" "$BRANCH" "$target" "$source" || fail "$repo: could not add $target"
   done <<<"$FILES"
-  gh api -X POST "/repos/$ORG/$repo/pulls" -f title="chore: adopt org standards" -f head="$BRANCH" -f base=staging \
+  pr=$(gh api -X POST "/repos/$ORG/$repo/pulls" -f title="chore: adopt org standards" -f head="$BRANCH" -f base=staging --jq .number \
     -f body="Adds the org-standard files this repo is missing:$(printf '\n- %s' $missing)
 
 Opened by scripts/bootstrap-repos.sh in sas-technology/.github. Edit or delete anything that doesn't fit this repo; the bootstrap only re-proposes files that are absent." \
-    >/dev/null || fail "$repo: could not open the PR"
+    ) || { fail "$repo: could not open the PR"; return; }
+  gh api -X POST "/repos/$ORG/$repo/issues/$pr/assignees" -f "assignees[]=$ASSIGNEE" >/dev/null || fail "$repo: could not assign #$pr"
+  gh api -X POST "/repos/$ORG/$repo/issues/$pr/labels" -f "labels[]=type: chore" -f "labels[]=standards" >/dev/null || fail "$repo: could not label #$pr"
 }
 
 repos=$(gh api --paginate "/orgs/$ORG/repos" --jq '.[] | select(.archived|not) | .name') || { echo "Could not list repos" >&2; exit 1; }

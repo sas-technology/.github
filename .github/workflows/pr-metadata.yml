@@ -1,0 +1,80 @@
+# PR metadata: every pull request has an assignee, labels and a filled-in
+# description. Fixes what it can instead of failing the PR:
+#
+#   - No assignee: assigns the PR author (a human), or for a bot PR
+#     (Dependabot, the bootstrap app) the repo's org owner fallback below.
+#   - No `type:` label: adds one from the Conventional Commits prefix of the
+#     title (feat -> type: feature, fix -> type: bug, ...); a staging -> main
+#     PR is `type: release`; Dependabot PRs keep their own labels.
+#   - Description empty or still the bare template: warns in the job summary.
+#
+# This file is meant to be named in the org ruleset's "Require workflows to
+# pass" rule (like org-lint.yml), so it runs on every PR in every repo from
+# this repo's main branch. A ruleset-run workflow ignores `on:` filters, so
+# the job checks the event itself. It never fails the PR.
+name: PR metadata
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, ready_for_review]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+env:
+  FALLBACK_ASSIGNEE: sas-bfawcett
+
+jobs:
+  metadata:
+    name: assignee and labels
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign and label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD: ${{ github.event.pull_request.head.ref }}
+          ASSIGNEES: ${{ join(github.event.pull_request.assignees.*.login, ',') }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "$ASSIGNEES" ]; then
+            who="$AUTHOR"
+            [ "$AUTHOR_TYPE" = "Bot" ] && who="$FALLBACK_ASSIGNEE"
+            gh pr edit "$NUMBER" --repo "$REPO" --add-assignee "$who" ||
+              echo "::warning::could not assign $who"
+          fi
+
+          case ",$LABELS," in *",type: "*) ;; *)
+            label=""
+            case "$TITLE" in
+              feat*) label="type: feature" ;;
+              fix*) label="type: bug" ;;
+              docs*) label="type: docs" ;;
+              chore*|ci*|build*|refactor*|test*|style*|perf*) label="type: chore" ;;
+            esac
+            if [ "$BASE" = "main" ] && [ "$HEAD" = "staging" ] || case "$HEAD" in release/*) true ;; *) false ;; esac; then
+              label="type: release"
+            fi
+            # Bot PRs (Dependabot) already carry their own labels.
+            if [ -n "$label" ] && [ "$AUTHOR_TYPE" != "Bot" ]; then
+              gh pr edit "$NUMBER" --repo "$REPO" --add-label "$label" ||
+                echo "::warning::could not add label '$label' (does it exist in $REPO?)"
+            fi
+          esac
+
+          trimmed=$(printf '%s' "$BODY" | tr -d '[:space:]')
+          if [ ${#trimmed} -lt 40 ] && [ "$AUTHOR_TYPE" != "Bot" ]; then
+            echo "### PR description is empty or unfilled" >>"$GITHUB_STEP_SUMMARY"
+            echo "Fill in the PR template: what changed, the related issue, the checklist." >>"$GITHUB_STEP_SUMMARY"
+            echo "::warning::PR description is empty or unfilled"
+          fi
