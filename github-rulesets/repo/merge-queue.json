@@ -19,7 +19,7 @@
     {
       "type": "merge_queue",
       "parameters": {
-        "merge_method": "SQUASH",
+        "merge_method": "MERGE",
         "grouping_strategy": "ALLGREEN",
         "check_response_timeout_minutes": 60,
         "min_entries_to_merge": 1,

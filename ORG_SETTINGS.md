@@ -26,10 +26,10 @@ For each JSON file in [`github-rulesets/`](./github-rulesets/):
 Or run `scripts/apply-org-rulesets.sh` (imports both files as
 _disabled_; add `--active` to enforce, `--dry-run` to preview).
 
-| File                            | What it does                                                                                                                                                                                                                                                                                                                                                     |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `org-wide-main-protection.json` | On every repo's default branch **and `staging`**: no deletion, no force-push, linear history, PR required (0 approvals), review threads resolved, squash/rebase only, **squash merge queue**, the five `lint / *` checks up to date, and the org-required workflows `org-lint.yml`, `release-version-check.yml` and `repo-standards.yml`. Org admins can bypass. |
-| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases.                                                                                                                                                                                                                                           |
+| File                            | What it does                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `org-wide-main-protection.json` | On every repo's default branch **and `staging`**: no deletion, no force-push, PR required (0 approvals), review threads resolved, merge-commit/rebase only (no squash), **merge-commit merge queue**, the five `lint / *` checks up to date, and the org-required workflows `org-lint.yml`, `release-version-check.yml` and `repo-standards.yml`. Org admins can bypass. |
+| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases.                                                                                                                                                                                                                                                   |
 
 **Merge the PR that adds the required workflows first.** The
 `workflows` rule names three files on this repo's `main`
@@ -40,8 +40,8 @@ this repo is deleted and recreated.
 
 **Merge queue.** Org rulesets cannot hold a `merge_queue` rule, so it
 is a repo-level ruleset (`github-rulesets/repo/merge-queue.json`)
-applied to each repo by `scripts/apply-org-settings.sh`: squash, batch
-size 1, on the default branch and `staging`. GitHub offers merge queue
+applied to each repo by `scripts/apply-org-settings.sh`: merge commit,
+batch size 1, on the default branch and `staging`. GitHub offers merge queue
 on public repos on any plan but on private repos only with GitHub
 Enterprise Cloud, so on the Team plan it runs on the public repos
 (`.github`, `knowledge`, `sas-default-app`, `sas-knowledge`) and the
@@ -54,6 +54,19 @@ trigger on `merge_group` will stall until that workflow adds it.
 is tagged as the next patch (`staging-version.yml`), a release from
 `staging` to `main` as the next minor, and a major only by hand
 (`release-version-check.yml` enforces this on PRs into both branches).
+Versioning tags whatever commit lands on the branch after merge — it
+never parses commit messages — so it works the same under any merge
+method.
+
+**Why merge commits, not squash.** Earlier, release PRs were
+squash-merged, which leaves `main` and `staging` holding identical
+content under two different commit SHAs (the squashed copy on `main`,
+the original commits on `staging`) — drift that only gets worse over
+time. Real merge commits keep `staging`'s commits as ancestors of
+`main`, so a release PR with no new changes is a true, empty-diff
+merge instead of a duplicate. `allowed_merge_methods` is `["merge",
+"rebase"]` (no squash) for exactly this reason; `required_linear_history`
+was removed from the ruleset because it forbids merge commits outright.
 
 **Adjust before importing, if needed:**
 

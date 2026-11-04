@@ -34,10 +34,11 @@ own `CONTRIBUTING.md` says otherwise.
 - Fill in the PR template; link the issue it closes, if any.
 - CI must pass (see the org's [reusable lint
   workflow](./.github/workflows/reusable-lint.yml)) before merge.
-- At least one review approval is required (see the org ruleset in
-  [`github-rulesets/org-wide-main-protection.json`](./github-rulesets/org-wide-main-protection.json)).
-- Squash or rebase merges only — no merge commits — to keep history
-  readable.
+- Review approval count is set by the org ruleset in
+  [`github-rulesets/org-wide-main-protection.json`](./github-rulesets/org-wide-main-protection.json)
+  (currently 0 — most work here is built in isolation).
+- Merge commit or rebase only — no squash — so `main` and `staging`
+  never drift into identical content under different commit SHAs.
 
 ## Code review
 
