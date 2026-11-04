@@ -66,6 +66,21 @@ is tagged as the next patch (`staging-version.yml`), a release from
 - `repository_name.exclude` — add any repo name patterns that should
   be exempt (e.g. scratch/sandbox repos).
 
+**Optional: require a human review before a `staging` → `main`
+release.** `github-rulesets/optional/main-release-review.json` is a
+second ruleset, imported **disabled** by default and left out of
+`scripts/apply-org-rulesets.sh`'s glob on purpose (it only picks up
+`github-rulesets/*.json`, not the `optional/` subfolder) — nothing
+enables it without a deliberate choice. It targets only
+`~DEFAULT_BRANCH` (never `staging`), so turning it on doesn't touch the
+0-reviewer policy for ordinary work into `staging`; it stacks with
+`org-wide-main-protection.json` and GitHub takes the stricter of the
+two `required_approving_review_count` values for `main`, so this one
+alone is enough to require 1 approval there. To turn it on: import it
+the same way as §1's files (UI import, or
+`gh api -X POST /orgs/sas-technology/rulesets --input github-rulesets/optional/main-release-review.json`),
+then edit its **Enforcement status** to **Active**.
+
 ## 2. Turn on org-wide security defaults
 
 **github.com/organizations/sas-technology/settings/security**:
