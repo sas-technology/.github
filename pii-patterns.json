@@ -1,0 +1,33 @@
+{
+  "patterns": [
+    {
+      "name": "email address",
+      "regex": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}",
+      "allow_domains": [
+        "example.com",
+        "example.org",
+        "example.net",
+        "test.com",
+        "localhost",
+        "users.noreply.github.com"
+      ],
+      "severity": "warning"
+    },
+    {
+      "name": "US Social Security Number",
+      "regex": "\\b\\d{3}-\\d{2}-\\d{4}\\b",
+      "severity": "error"
+    },
+    {
+      "name": "credit card number",
+      "regex": "\\b\\d{4}[ -]?\\d{4}[ -]?\\d{4}[ -]?\\d{1,4}\\b",
+      "severity": "error"
+    },
+    {
+      "name": "US phone number",
+      "regex": "\\b(?:\\+?1[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]\\d{3}[-.\\s]\\d{4}\\b",
+      "severity": "warning"
+    }
+  ],
+  "_comment": "Add school-specific patterns here, e.g. a student/staff ID format from the SIS. Each pattern needs: name, regex (a Python re pattern, double-escaped for JSON), optional severity ('warning' or 'error', default 'warning'), and for email-like patterns only, allow_domains to skip known-placeholder domains. A calling repo can override this whole file by keeping its own pii-patterns.json at its root instead of falling back to this one."
+}
