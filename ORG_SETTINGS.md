@@ -126,6 +126,11 @@ configuration" in `README.md`):
   false positives; a repo sets `fail-on-match: true` once its patterns
   are tuned. Add a school-specific pattern (e.g. a student/staff ID
   format) by copying `pii-patterns.json` into that repo and editing it.
+  It runs on **release PRs only** (base = the default branch) and never
+  blocks a release: a finding adds the `needs: dpia-review` label and the
+  summary says whether the repo's `docs/security` (or `security`, `docs`)
+  has a DPIA pre-assessment explaining what the personal data is used for.
+  The template is `docs/security/DPIA-PREASSESSMENT-TEMPLATE.md`.
 - Copy `.github/dependabot.example.yml` → `.github/dependabot.yml` in
   each repo and delete the ecosystem blocks that don't apply.
 - Copy `CODEOWNERS.example` → `.github/CODEOWNERS` in each repo once
