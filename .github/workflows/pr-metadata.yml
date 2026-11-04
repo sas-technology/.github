@@ -17,6 +17,10 @@ name: PR metadata
 on:
   pull_request_target:
     types: [opened, reopened, edited, ready_for_review]
+  # A required workflow must also report in the merge queue, or a queued PR
+  # waits on it until the queue times out. The job skips there (a skipped
+  # job passes).
+  merge_group:
 
 permissions:
   pull-requests: write
