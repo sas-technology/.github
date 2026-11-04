@@ -27,6 +27,9 @@ EXCLUDE_PATHSPECS = [
     ":!scripts/pii-scan.py",
 ]
 
+# A release that adds PII handling needs a DPIA pre-assessment doc in one of these.
+DPIA_DIRS = ["docs/security", "security", "docs"]
+
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
@@ -135,6 +138,33 @@ def find_matches(added_lines, patterns):
     return findings
 
 
+def dpia_docs():
+    """Markdown files in the security/docs directories that mention a DPIA."""
+    found = []
+    for d in DPIA_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for root, _dirs, files in os.walk(d):
+            for name in files:
+                if not name.lower().endswith(".md"):
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    with open(path, encoding="utf-8", errors="ignore") as f:
+                        if "dpia" in f.read().lower():
+                            found.append(path)
+                except OSError:
+                    pass
+    return sorted(set(found))
+
+
+def set_output(name, value):
+    path = os.environ.get("GITHUB_OUTPUT")
+    if path:
+        with open(path, "a", encoding="utf-8") as o:
+            o.write(f"{name}={value}\n")
+
+
 def report(findings, fail_on_match):
     if not findings:
         print("No potential PII found in this PR's added lines.")
@@ -150,6 +180,18 @@ def report(findings, fail_on_match):
         )
     print("::endgroup::")
 
+    docs = dpia_docs()
+    set_output("needs_review", "true")
+    set_output("dpia_docs", "found" if docs else "missing")
+    if docs:
+        print(f"DPIA pre-assessment doc(s) found: {', '.join(docs)} — reviewer to confirm it covers this release.")
+    else:
+        print(
+            "::warning::No DPIA pre-assessment doc found in docs/security, security or docs. "
+            "This release is flagged for review; add docs/security/DPIA-PREASSESSMENT.md "
+            "(template: sas-technology/.github docs/security/DPIA-PREASSESSMENT-TEMPLATE.md)."
+        )
+
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
         with open(summary_path, "a", encoding="utf-8") as s:
@@ -160,6 +202,10 @@ def report(findings, fail_on_match):
                 s.write(
                     f"| `{f['file']}` | {f['line']} | {f['type']} | `{f['context']}` |\n"
                 )
+            if docs:
+                s.write("\n**DPIA pre-assessment:** found in " + ", ".join(f"`{d}`" for d in docs) + " — reviewer to confirm it covers this release.\n")
+            else:
+                s.write("\n**DPIA pre-assessment: missing.** This release is flagged for review, not blocked. Add `docs/security/DPIA-PREASSESSMENT.md` stating what the personal data is used for and the pre-assessment outcome (template in `sas-technology/.github`, `docs/security/`).\n")
             s.write(
                 "\nFalse positive? Add `pii-scan:ignore` as a comment on that line "
                 "and push again.\n"
