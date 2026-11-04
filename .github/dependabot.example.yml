@@ -3,7 +3,7 @@
 # repo and delete the ecosystem blocks that don't apply. Dependabot
 # config is per-repo — it does not propagate from this `.github` repo.
 #
-# Org convention: weekly on Monday, one grouped PR per ecosystem
+# Org convention: weekly on Monday at 09:00 Singapore time, one grouped PR per ecosystem
 # instead of one PR per package.
 #
 # Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
@@ -16,6 +16,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+      time: "09:00"
+      timezone: "Asia/Singapore"
     groups:
       npm-dependencies:
         patterns: ["*"]
@@ -26,6 +28,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+      time: "09:00"
+      timezone: "Asia/Singapore"
     groups:
       pip-dependencies:
         patterns: ["*"]
@@ -36,6 +40,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+      time: "09:00"
+      timezone: "Asia/Singapore"
     groups:
       swift-dependencies:
         patterns: ["*"]
@@ -46,6 +52,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+      time: "09:00"
+      timezone: "Asia/Singapore"
     groups:
       github-actions:
         patterns: ["*"]
