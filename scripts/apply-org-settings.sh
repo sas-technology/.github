@@ -8,6 +8,15 @@
 #      Repo defaults  (merge/squash/rebase, auto-merge, update-branch)
 #   4. Verify         (per repo: staging branch + the rules that apply to main and staging)
 #
+# Immutable releases are handled per-repo by scripts/bootstrap-repos.sh, not
+# here (it calls PUT /repos/{owner}/{repo}/immutable-releases directly; there
+# is no single org-wide switch this script could flip instead).
+#
+# Optional, NOT run by this script: github-rulesets/optional/*.json. These are
+# opt-in controls (e.g. requiring a human review before a staging -> main
+# release) left out of the default rollout on purpose; import them by hand
+# when wanted. See ORG_SETTINGS.md.
+#
 # Usage:
 #   scripts/apply-org-settings.sh --dry-run          # preview, change nothing
 #   scripts/apply-org-settings.sh                    # rulesets imported DISABLED; review in the UI
@@ -37,7 +46,7 @@ for arg in "$@"; do
     --skip-security) DO_SECURITY=0 ;;
     --skip-repos) DO_REPOS=0 ;;
     -h | --help)
-      sed -n '2,19p' "$0"
+      sed -n '2,25p' "$0"
       exit 0
       ;;
     *)
