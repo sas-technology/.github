@@ -117,9 +117,17 @@ configuration" in `README.md`):
 - Lint (`org-lint.yml`) already runs on every repo automatically once
   §1's ruleset is active — no action needed, and it's a required,
   merge-blocking check on every repo (public and private) under Team.
-- For CodeQL / dependency review / PR-title lint / stale-bot on a
-  given repo, add a thin caller workflow referencing the matching
-  `reusable-*.yml` (see examples in each file's header comment).
+- For CodeQL / dependency review / PR-title lint / stale-bot / data
+  farming review on a given repo, add a thin caller workflow
+  referencing the matching `reusable-*.yml` (see examples in each
+  file's header comment).
+  `reusable-data-farming-review.yml` has Claude read a PR's diff and
+  post one comment flagging code that collects personal data and sends
+  it somewhere beyond what the PR is actually about — a judgment call
+  a regex can't make. Needs an **`ANTHROPIC_API_KEY` secret** (repo or
+  org level) that an org owner adds — nothing in this repo creates it.
+  It costs real API tokens per run and never blocks merging by itself,
+  so it's opt-in per repo, same as the others.
 - Copy `.github/dependabot.example.yml` → `.github/dependabot.yml` in
   each repo and delete the ecosystem blocks that don't apply.
 - Copy `CODEOWNERS.example` → `.github/CODEOWNERS` in each repo once
