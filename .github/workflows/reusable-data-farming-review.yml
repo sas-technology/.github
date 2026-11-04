@@ -61,9 +61,10 @@ jobs:
           fetch-depth: 0
 
       - name: Claude review
-        uses: anthropics/claude-code-action@91df1ea93b777a3ca56bcb99fae55bbcc6bcaee3 # v1.0.268
+        uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1.0.268
         with:
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
+          github_token: ${{ github.token }}
           prompt: |
             Review only the files CHANGED in this pull request (diff the PR
             head against its base; do not review the rest of the repository
@@ -105,4 +106,6 @@ jobs:
             and what you'd ask the author to confirm. End with one line
             making clear this is an automated heuristic read for a human to
             verify, not a security verdict, and it does not block merging.
-          claude_args: "--max-turns 6"
+          claude_args: >-
+            --max-turns 6
+            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
