@@ -57,17 +57,28 @@ def get_added_lines(base_sha, head_sha):
 
     file_path = None
     line_no = None
+    in_header = False
     for line in diff.splitlines():
-        if line.startswith("+++ "):
+        # "+++ " is a file header only before a file's first hunk; inside a hunk
+        # an added line that begins with "++ " looks the same and must be scanned.
+        if line.startswith("diff --git "):
+            in_header = True
+            file_path = None
+            line_no = None
+            continue
+        if in_header and line.startswith("+++ "):
             file_path = line[6:] if line.startswith("+++ b/") else None
             continue
         if line.startswith("@@"):
+            in_header = False
             m = HUNK_HEADER.match(line)
             line_no = int(m.group(1)) if m else None
             continue
         if file_path is None or line_no is None:
             continue
-        if line.startswith("+") and not line.startswith("+++"):
+        if in_header:
+            continue
+        if line.startswith("+"):
             yield file_path, line_no, line[1:]
             line_no += 1
         elif not line.startswith("-"):
