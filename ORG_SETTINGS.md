@@ -117,9 +117,15 @@ configuration" in `README.md`):
 - Lint (`org-lint.yml`) already runs on every repo automatically once
   §1's ruleset is active — no action needed, and it's a required,
   merge-blocking check on every repo (public and private) under Team.
-- For CodeQL / dependency review / PR-title lint / stale-bot on a
-  given repo, add a thin caller workflow referencing the matching
+- For CodeQL / dependency review / PR-title lint / stale-bot / PII scan
+  on a given repo, add a thin caller workflow referencing the matching
   `reusable-*.yml` (see examples in each file's header comment).
+  `reusable-pii-scan.yml` flags likely PII (emails, phone numbers, SSNs,
+  card numbers) in a PR's added lines for human review — it warns by
+  default rather than blocking merge, since regex matching has real
+  false positives; a repo sets `fail-on-match: true` once its patterns
+  are tuned. Add a school-specific pattern (e.g. a student/staff ID
+  format) by copying `pii-patterns.json` into that repo and editing it.
 - Copy `.github/dependabot.example.yml` → `.github/dependabot.yml` in
   each repo and delete the ecosystem blocks that don't apply.
 - Copy `CODEOWNERS.example` → `.github/CODEOWNERS` in each repo once
