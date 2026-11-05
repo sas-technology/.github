@@ -1,0 +1,101 @@
+# Scans a PR's ADDED lines for likely PII (emails, phone numbers, SSNs,
+# credit card numbers) and flags matches for human review. It does NOT
+# block merge by default: these patterns have real false positives
+# (version strings, SHAs, test fixtures), so the default is "warn and
+# summarize," not "auto-reject." A repo that has tuned its patterns and
+# wants a hard gate instead sets fail-on-match: true.
+#
+# Only lines the diff ADDS are checked, never the whole repo, so this
+# stays fast and never flags pre-existing content nobody is touching.
+# Matches are redacted before they reach logs or the job summary -- the
+# actual PII is never printed in full.
+#
+# Patterns live in pii-patterns.json, read from the CALLING repo's own
+# root if it has one, otherwise from this repo's default copy (same
+# fallback shape reusable-lint.yml uses for .prettierrc etc.). Add a
+# school-specific pattern (e.g. a student/staff ID format) by copying
+# this repo's pii-patterns.json into the calling repo and editing it.
+#
+# Suppress a known false positive inline: add `pii-scan:ignore` as a
+# comment on that line and push again.
+#
+# Runs on RELEASE PRs only (base = default branch). It never blocks the release:
+# a finding adds the `needs: dpia-review` label and a summary telling the
+# reviewer whether docs/security has a DPIA pre-assessment for what the PII
+# does. Template: docs/security/DPIA-PREASSESSMENT-TEMPLATE.md.
+#
+# Usage, in a repo's workflow (needs a pull_request trigger so the base
+# and head SHAs are available):
+#
+#   on:
+#     pull_request:
+#   jobs:
+#     pii-scan:
+#       uses: sas-technology/.github/.github/workflows/reusable-pii-scan.yml@main
+#       with:
+#         fail-on-match: false   # default; set true once tuned for this repo
+#
+# Caveats: regex-based, not an NLP model -- it catches well-formed
+# patterns, not a name typed in prose or a photo of a document. It is one
+# layer, not a replacement for not putting real student/staff data in a
+# repo in the first place (see AGENTS.md).
+
+name: Reusable - PII scan
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-match:
+        type: boolean
+        default: false
+        description: Fail the check (not just warn) when PII is found.
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  scan:
+    name: pii scan
+    runs-on: ubuntu-latest
+    # Releases to production only: a PR whose base is the default branch.
+    # Feature PRs into staging are not scanned.
+    if: github.event.pull_request.base.ref == github.event.repository.default_branch
+    steps:
+      - name: Check out this repo's full history (needed to diff base...head)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the org scanner + default patterns
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: sas-technology/.github
+          path: .org-pii-scan
+          sparse-checkout: |
+            scripts/pii-scan.py
+            pii-patterns.json
+
+      - name: Run the scan
+        id: scan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FAIL_ON_MATCH: ${{ inputs.fail-on-match }}
+        run: |
+          set -euo pipefail
+          config="pii-patterns.json"
+          [ -f "$config" ] || config=".org-pii-scan/pii-patterns.json"
+          python3 .org-pii-scan/scripts/pii-scan.py "$config" "$BASE_SHA" "$HEAD_SHA" "$FAIL_ON_MATCH"
+
+      - name: Flag the release for review
+        if: steps.scan.outputs.needs_review == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          DPIA_DOCS: ${{ steps.scan.outputs.dpia_docs }}
+        run: |
+          gh label create "needs: dpia-review" --color d93f0b \
+            --description "Release handles personal data: DPIA pre-assessment to be confirmed" 2>/dev/null || true
+          gh pr edit "$PR" --add-label "needs: dpia-review" ||
+            echo "::warning::could not add the needs: dpia-review label"
