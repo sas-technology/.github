@@ -1,0 +1,64 @@
+# Automatic releases, org-wide: the staging -> default-branch release PR
+# (auto-merge on) and the next-MINOR tag on release merges, both as the
+# bootstrap app - which is the only identity whose pull requests trigger
+# the required checks (a repo's own GITHUB_TOKEN cannot). Runs
+# scripts/auto-release-prs.sh; the policy and the AUTO_RELEASE=off opt-out
+# are documented in ORG_SETTINGS.md.
+#
+# Until the app exists the job is skipped, not failed.
+name: Auto release
+
+on:
+  schedule:
+    - cron: "*/15 * * * *" # every 15 minutes
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Only this repo (blank = every repo)"
+        required: false
+        type: string
+      dry_run:
+        description: "Report only, change nothing"
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    if: ${{ vars.BOOTSTRAP_APP_CLIENT_ID != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: org-bootstrap
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Mint a GitHub App token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOOTSTRAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.BOOTSTRAP_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Open and tag releases
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          INPUT_REPO: ${{ inputs.repo }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$INPUT_DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          if [ -n "$INPUT_REPO" ]; then args+=(--repo "$INPUT_REPO"); fi
+          scripts/auto-release-prs.sh ${args[@]+"${args[@]}"}

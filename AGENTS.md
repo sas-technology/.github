@@ -33,7 +33,9 @@ Every PR an agent opens, in any repo:
   `type: chore`, `type: docs`, `type: security`, `type: release`) plus any
   repo-specific ones. Org standard labels exist in every repo.
 - **Target `staging`**; only a release PR (`staging` into `main`) targets
-  `main`, titled `Release: ...` and labelled `type: release`.
+  `main`, titled `Release: ...` and labelled `type: release`. The org's
+  `Auto release` workflow opens and merges these itself — do not open one
+  by hand unless it fails to.
 - **Fill in the PR template**: what changed and why, the related issue, the
   checklist, and the AI-assistance note.
 - The org workflow `pr-metadata.yml` fills in a missing assignee and label as

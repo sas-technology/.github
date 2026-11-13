@@ -26,10 +26,10 @@ For each JSON file in [`github-rulesets/`](./github-rulesets/):
 Or run `scripts/apply-org-rulesets.sh` (imports both files as
 _disabled_; add `--active` to enforce, `--dry-run` to preview).
 
-| File                            | What it does                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `org-wide-main-protection.json` | On every repo's default branch **and `staging`**: no deletion, no force-push, PR required (0 approvals), review threads resolved, merge/squash/rebase allowed, **squash merge queue**, the five `lint / *` checks up to date, and the org-required workflows `org-lint.yml`, `release-version-check.yml` and `repo-standards.yml`. Org admins can bypass only through a pull request, never by pushing straight to the branch. |
-| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases.                                                                                                                                                                                                                                                                                                         |
+| File                            | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `org-wide-main-protection.json` | On every repo's default branch **and `staging`**: no deletion, no force-push, PR required (0 approvals), review threads resolved, merge/squash/rebase allowed, **squash merge queue**, the five `lint / *` checks up to date, and the org-required workflows `org-lint.yml`, `release-version-check.yml` and `repo-standards.yml`. Org admins can bypass only through a pull request, never by pushing straight to the branch. The push that CREATES a covered branch is exempt from the checks and workflow rules (`do_not_enforce_on_create`), so a member-created repo can land its first commit on `main` and the bootstrap app can create `staging`; every push after that is fully enforced. |
+| `release-tag-protection.json`   | Tags matching `vX.Y.Z` can't be deleted, force-pushed, or moved once created — for any repo that does semver releases.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 **Merge the PR that adds the required workflows first.** The
 `workflows` rule names three files on this repo's `main`
@@ -172,6 +172,38 @@ pull requests write; members and metadata read. If the private key is
 ever exposed, generate a new one in the app's settings and replace the
 environment secret. The job is skipped, not failed, while
 `BOOTSTRAP_APP_CLIENT_ID` is unset.
+
+## 6. Automatic releases
+
+The `Auto release` workflow (`auto-release.yml`, every 15 minutes, or by
+hand from the Actions tab) runs `scripts/auto-release-prs.sh` as the
+bootstrap app and keeps the release flow hands-off:
+
+- When `staging` is ahead of the default branch, the release PR
+  (`staging` → default, titled `Release: …`) is open with **auto-merge
+  (squash)** on. The app never merges anything — the required checks
+  decide, GitHub does the merge, merge queue included.
+- When the default branch tip is an untagged `Release: …` squash merge,
+  it is tagged with the next **MINOR** and published as the latest
+  GitHub release — as the app, so `on: push: tags` publish workflows
+  fire on production releases.
+- Staging **PATCH** tags stay with each repo's own GITHUB_TOKEN
+  workflow (`reusable-staging-release.yml`): those tags are inert by
+  design, so a beta build never ships from a publish pipeline.
+- A repo opts out with the `AUTO_RELEASE=off` repository variable —
+  for repos that release on their own schedule or tag themselves (this
+  repo, via `main-release.yml`, has it set).
+
+Why the app and not GITHUB_TOKEN: a pull request opened with a repo's
+own GITHUB_TOKEN does not trigger the required workflows (GitHub
+suppresses events caused by that token), so auto-merge would never
+fire. The bootstrap app is installed on every repo, already a bypass
+actor, and its private key never leaves the `org-bootstrap`
+environment.
+
+A MAJOR is still by hand: add the `semver:major` label to the release
+PR before it merges (`release-version-check.yml` enforces the policy,
+and `auto-release-prs.sh` tags whatever the checks allowed through).
 
 ## Review cadence
 
