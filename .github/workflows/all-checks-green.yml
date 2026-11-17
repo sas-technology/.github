@@ -1,0 +1,115 @@
+# Org-required gate: nothing merges while any check is red or orange.
+#
+# Each org ruleset names this file in a "Require workflows to pass" rule,
+# beside org-lint.yml, so GitHub runs it on every pull request and every
+# merge-queue entry in every repo. No per-repo copy is needed; a repo that
+# still carries its own all-green.yml should drop it once this is required,
+# so the `All checks green` context does not run twice.
+#
+# What it does. It waits 30 seconds for the other workflows to register,
+# then reads every check run and commit status on the commit under test
+# (the PR head, or the merge-group commit in the queue) every 20 seconds:
+#
+#   red     failure, cancelled, timed_out, action_required, neutral, stale,
+#           or a commit status of error or failure: the job fails at once
+#   orange  queued, in_progress, waiting, pending, or a pending status:
+#           keep waiting
+#   green   success or skipped
+#
+# Where a check has run more than once, only its newest run counts, so a
+# re-run that turns green clears an earlier failure.
+#
+# It passes only after two polls in a row find everything else green, so a
+# workflow that registers late is not missed. Anything still orange after
+# 40 minutes fails the job. It skips its own context by name.
+#
+# Bash and gh only: no Node, no third-party action.
+
+name: All checks green
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+
+concurrency:
+  group: all-checks-green-${{ github.repository }}-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+  cancel-in-progress: true
+
+permissions:
+  checks: read
+  statuses: read
+
+jobs:
+  all-green:
+    name: All checks green
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Wait until every other check on this commit is green
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          SELF: All checks green
+        run: |
+          set -euo pipefail
+          echo "Commit under test: $SHA"
+          sleep 30
+          deadline=$(( $(date +%s) + 40 * 60 ))
+          streak=0
+          while :; do
+            # Every run on the commit, then the newest per name: a re-run
+            # (such as a title check re-run by an edit) lands in a new check
+            # suite, and filter=latest keeps the old result in the old suite.
+            runs=$(gh api --paginate \
+              "repos/$REPO/commits/$SHA/check-runs?filter=all&per_page=100" \
+              --jq '.check_runs[] | select(.name != env.SELF)
+                    | {id, name, status, conclusion}' |
+              jq -rs 'group_by(.name) | map(max_by(.id))[]
+                      | [.status, (.conclusion // "none"), .name] | @tsv')
+            statuses=$(gh api "repos/$REPO/commits/$SHA/status" \
+              --jq '.statuses[] | [.state, .context] | @tsv')
+
+            red=()
+            orange=()
+            while IFS=$'\t' read -r status conclusion name; do
+              [ -n "$name" ] || continue
+              if [ "$status" != "completed" ]; then
+                orange+=("$name ($status)")
+                continue
+              fi
+              case "$conclusion" in
+                success | skipped) ;;
+                *) red+=("$name ($conclusion)") ;;
+              esac
+            done <<< "$runs"
+            while IFS=$'\t' read -r state context; do
+              [ -n "$context" ] || continue
+              case "$state" in
+                success) ;;
+                pending) orange+=("$context (status pending)") ;;
+                *) red+=("$context (status $state)") ;;
+              esac
+            done <<< "$statuses"
+
+            if [ "${#red[@]}" -gt 0 ]; then
+              printf '::error::Red: %s\n' "${red[@]}"
+              exit 1
+            fi
+            if [ "${#orange[@]}" -eq 0 ]; then
+              streak=$(( streak + 1 ))
+              if [ "$streak" -ge 2 ]; then
+                echo "Every other check on $SHA is green."
+                exit 0
+              fi
+            else
+              streak=0
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                printf '::error::Still pending at the timeout: %s\n' "${orange[@]}"
+                exit 1
+              fi
+              echo "Waiting on ${#orange[@]}: ${orange[*]}"
+            fi
+            sleep 20
+          done
