@@ -158,8 +158,10 @@ bootstrap_repo() {
     fi
   fi
 
-  # 2. staging
-  if [ "$ready" -eq 1 ] && ! gh api "/repos/$ORG/$repo/branches/staging" --silent 2>/dev/null; then
+  # 2. staging (not for .github repos: they work directly on the default branch)
+  if [ "$repo" = ".github" ]; then
+    echo "  - .github repo: no staging by design (works on $db)"
+  elif [ "$ready" -eq 1 ] && ! gh api "/repos/$ORG/$repo/branches/staging" --silent 2>/dev/null; then
     act "create 'staging' from '$db'"
     sha=$(gh api "/repos/$ORG/$repo/git/ref/heads/$db" --jq .object.sha)
     api -X POST "/repos/$ORG/$repo/git/refs" -f ref=refs/heads/staging -f sha="$sha" >/dev/null ||
