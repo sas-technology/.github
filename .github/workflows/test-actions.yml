@@ -30,7 +30,7 @@ on:
       - ".github/workflows/release-version-check.yml"
       - ".github/workflows/test-actions.yml"
   push:
-    branches: [main, staging]
+    branches: [main]
     paths:
       - ".github/actions/**"
       - ".github/workflows/reusable-staging-release.yml"

@@ -36,6 +36,9 @@ Every PR an agent opens, in any repo:
   `main`, titled `Release: ...` and labelled `type: release`. The org's
   `Auto release` workflow opens and merges these itself — do not open one
   by hand unless it fails to.
+  **Exception: `sas-technology/.github` itself has no `staging` branch** —
+  it releases straight off `main` (see `main-release.yml`); target `main`
+  directly here.
 - **Fill in the PR template**: what changed and why, the related issue, the
   checklist, and the AI-assistance note.
 - The org workflow `pr-metadata.yml` fills in a missing assignee and label as
