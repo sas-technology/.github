@@ -50,9 +50,11 @@ the `merge_group` event; a repo whose own required checks don't
 trigger on `merge_group` will stall until that workflow adds it.
 `repo-standards.yml` warns about exactly this.
 
-**Staging.** Every repo has a `staging` branch. A merge into `staging`
-is tagged as the next patch (`staging-version.yml`), a release from
-`staging` to `main` as the next minor, and a major only by hand
+**Staging.** Every repo has a `staging` branch, **except `sas-technology/.github`
+itself**, which releases straight off `main` (see `main-release.yml`) —
+mirroring `nyuchi/.github`, the reference template. On every other repo, a
+merge into `staging` is tagged as the next patch (`staging-version.yml`), a
+release from `staging` to `main` as the next minor, and a major only by hand
 (`release-version-check.yml` enforces this on PRs into both branches).
 
 **Adjust before importing, if needed:**

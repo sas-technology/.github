@@ -3,7 +3,8 @@
 #
 # A thin caller of the reusable lint workflow, run on this repo's own
 # changes (by local path, so a PR that edits reusable-lint.yml runs the
-# edited copy) and on pushes to main and staging. The "Main release"
+# edited copy) and on pushes to main (this repo has no staging branch;
+# it releases straight off main, see main-release.yml). The "Main release"
 # workflow waits for this one to pass before it tags a release.
 #
 # All five jobs (actionlint, JSON validity, prettier, markdownlint,
@@ -15,7 +16,7 @@ name: Lint
 on:
   pull_request:
   push:
-    branches: [main, staging]
+    branches: [main]
   # Required checks must also report on a merge queue's gh-readonly-queue/**
   # ref, or a queued PR waits until the queue times it out.
   merge_group:
